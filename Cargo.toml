@@ -12,10 +12,15 @@ image = "0.24.3"
 rayon = "1.5.3"
 vulkano = "0.30.0"
 vulkano-win = "0.30.0"
+vulkano-shaders = "0.30.0"
+bytemuck = "1.11.0"
 winit = "0.26"
 hecs = "0.8.2"
+
+
 
 [profile.release]
 # codegen-units = 1
 panic = "abort"
 debug = true
+

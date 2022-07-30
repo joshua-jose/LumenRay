@@ -5,5 +5,5 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
     println!("Hello World!");
-    engine::vk_backend::VkBackend::new("window", 800, 600);
+    engine::vk_backend::VkBackend::new("LumenRay", 800, 600);
 }
