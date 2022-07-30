@@ -1,0 +1,4 @@
+struct_field_align_threshold=20
+fn_single_line=true
+fn_args_layout="Compressed"
+max_width=120
