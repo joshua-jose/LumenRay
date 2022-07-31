@@ -18,7 +18,7 @@ use vulkano::{
     sync::Sharing,
 };
 
-use log::{debug, error, info, warn};
+use log::{debug, error, info, trace, warn};
 use vulkano_win::VkSurfaceBuild;
 use winit::{
     event_loop::EventLoop,
@@ -35,7 +35,6 @@ pub struct VkBackend {
     pub debug_callback:        Option<DebugUtilsMessenger>,
     pub queues:                Vec<Arc<Queue>>,
     pub surface:               Arc<Surface<Window>>,
-    pub event_loop:            EventLoop<()>,
     pub graphics_queue:        Arc<Queue>,
     pub present_queue:         Arc<Queue>,
     pub compute_queue:         Arc<Queue>,
@@ -44,13 +43,13 @@ pub struct VkBackend {
 }
 
 impl VkBackend {
-    pub fn new(title: &str, width: u32, height: u32) -> Self {
+    pub fn new(event_loop: &EventLoop<()>, title: &str, width: u32, height: u32) -> Self {
         // find out what extensions vulkano_win/winit requires
         let required_extensions = Self::get_required_instance_extensions(vulkano_win::required_extensions());
         let instance = Self::create_instance(required_extensions);
         let debug_callback = Self::setup_debug_callback(&instance);
 
-        let (surface, event_loop) = Self::create_surface(&instance, title, width, height);
+        let surface = Self::create_surface(&instance, event_loop, title, width, height);
 
         let device_extensions = Self::get_required_device_extensions();
 
@@ -75,7 +74,6 @@ impl VkBackend {
             physical_device_index,
             queues,
             surface,
-            event_loop,
             graphics_queue,
             present_queue,
             swap_chain,
@@ -85,12 +83,11 @@ impl VkBackend {
         }
     }
 
-    /*
-    ----------------------------------------------------------------------------------------------------------------------
-                                        VULKAN CONFIGURATION AND OPTIONS
-    ----------------------------------------------------------------------------------------------------------------------
-    */
+    // ----------------------------------------------------------------------------------------------------------------------
+    //                                      VULKAN CONFIGURATION AND OPTIONS
+    // ----------------------------------------------------------------------------------------------------------------------
 
+    /// Desired extensions for a given instance
     const fn get_required_instance_extensions(window_extensions: InstanceExtensions) -> InstanceExtensions {
         InstanceExtensions {
             ext_debug_utils: true,
@@ -99,6 +96,7 @@ impl VkBackend {
         .union(&window_extensions)
     }
 
+    /// Desired extensions for our device
     const fn get_required_device_extensions() -> DeviceExtensions {
         DeviceExtensions {
             khr_swapchain: true,
@@ -107,6 +105,7 @@ impl VkBackend {
         }
     }
 
+    /// Desired features our device
     const fn get_required_device_features() -> Features {
         Features {
             dynamic_rendering: true,
@@ -114,6 +113,7 @@ impl VkBackend {
         }
     }
 
+    /// Decides if a given physical device has the right extensions and queues for us
     fn is_device_suitable<W>(p: &PhysicalDevice, device_extensions: DeviceExtensions, surface: &Surface<W>) -> bool {
         p.supported_extensions().is_superset_of(&device_extensions)
         &&
@@ -125,14 +125,17 @@ impl VkBackend {
         p.queue_families().find(|&q| q.supports_surface(&surface).unwrap_or(false)).is_some()
     }
 
+    /// Picks a colour format,and a colour space to use.
     fn choose_swap_surface_format(available_formats: Vec<(Format, ColorSpace)>) -> (Format, ColorSpace) {
         // Try to use our preferred format and color space (8 bit RGB in the sRGB colour space)
+        debug!("Available formats: {:?}", available_formats);
         *available_formats
             .iter()
             .find(|(format, color_space)| *format == Format::B8G8R8A8_SRGB && *color_space == ColorSpace::SrgbNonLinear)
             .expect("Desired colour format and space not available")
     }
 
+    /// Picks a present mode, based on a score. The lowest scoring present mode is selected
     fn choose_swap_present_mode(mut available_present_modes: Vec<PresentMode>) -> PresentMode {
         // score present modes based on how desirable they are, with lowest being best
         available_present_modes.sort_by_key(|m| match m {
@@ -144,6 +147,7 @@ impl VkBackend {
         *available_present_modes.first().expect("No present modes")
     }
 
+    /// The size of the swap chain images. We would like this to be our surface width and height
     fn choose_swap_extent(capabilities: &SurfaceCapabilities, width: u32, height: u32) -> [u32; 2] {
         // try to determine the dimensions of the swapchain.
         // we would like this to be our window width and height.
@@ -159,10 +163,11 @@ impl VkBackend {
         }
     }
 
-    /*
-    ----------------------------------------------------------------------------------------------------------------------
-    */
+    // ----------------------------------------------------------------------------------------------------------------------
+    //                                      VULKAN SETUP AND INITIALISATION
+    // ----------------------------------------------------------------------------------------------------------------------
 
+    /// Gets the queues that we want from a list of queues, that was provided by the device.
     fn get_queues(queues: &Vec<Arc<Queue>>, surface: &Surface<Window>) -> (Arc<Queue>, Arc<Queue>, Arc<Queue>) {
         let graphics_queue = queues
             .iter()
@@ -180,6 +185,7 @@ impl VkBackend {
         (graphics_queue.clone(), present_queue.clone(), compute_queue.clone())
     }
 
+    /// Creates a Vulkan instance
     fn create_instance(extensions: InstanceExtensions) -> Arc<Instance> {
         let mut enabled_layers: Vec<String> = vec![];
         // push on validation layers if required
@@ -197,38 +203,41 @@ impl VkBackend {
         .expect("failed to create instance")
     }
 
+    /// Creates a debug callback, if the validation layer is enabled. This allows the validation layer to give us debug messages.
     fn setup_debug_callback(instance: &Arc<Instance>) -> Option<DebugUtilsMessenger> {
         if !ENABLE_VALIDATION_LAYERS {
             return None;
         }
 
+        // the logging callback
         let log_message = Arc::new(|msg: &Message| {
             let msg_type = if msg.ty.general {
-                "general"
+                "validation_layer/general"
             } else if msg.ty.validation {
-                "validation"
+                "validation_layer/validation"
             } else if msg.ty.performance {
-                "performance"
+                "validation_layer/performance"
             } else {
-                " unknown"
+                "validation_layer/unknown"
             };
             if msg.severity.error {
-                error!("{}: {}", msg_type, msg.description);
+                error!(target: msg_type, "{}", msg.description);
             } else if msg.severity.warning {
-                warn!("{}: {}", msg_type, msg.description);
+                warn!(target: msg_type, "{}", msg.description);
             } else if msg.severity.information {
-                info!("{}: {}", msg_type, msg.description);
+                trace!(target: msg_type, "{}", msg.description);
             } else if msg.severity.verbose {
-                debug!("{}: {}", msg_type, msg.description);
+                trace!(target: msg_type, "{}", msg.description);
             }
         });
 
+        // setup/register the callback
         unsafe {
             Some(
                 DebugUtilsMessenger::new(
                     instance.clone(),
                     DebugUtilsMessengerCreateInfo {
-                        message_severity: DebugUtilsMessageSeverity::errors_and_warnings(),
+                        message_severity: DebugUtilsMessageSeverity::all(),
                         message_type: DebugUtilsMessageType::all(),
                         ..DebugUtilsMessengerCreateInfo::user_callback(log_message)
                     },
@@ -238,9 +247,10 @@ impl VkBackend {
         }
     }
 
+    /// Creates a window and a vulkan surface.
     fn create_surface(
-        instance: &Arc<Instance>, title: &str, width: u32, height: u32,
-    ) -> (Arc<Surface<Window>>, EventLoop<()>) {
+        instance: &Arc<Instance>, event_loop: &EventLoop<()>, title: &str, width: u32, height: u32,
+    ) -> Arc<Surface<Window>> {
         //first we need to create the window.
         //
         // This is done by creating a `WindowBuilder` from the `winit` crate, then calling the
@@ -250,16 +260,16 @@ impl VkBackend {
         //
         // This returns a `vulkano::swapchain::Surface` object that contains both a cross-platform winit
         // window and a cross-platform Vulkan surface that represents the surface of the window.
-        let event_loop = EventLoop::new();
         let surface = WindowBuilder::new()
             .with_title(title)
             .with_inner_size(winit::dpi::LogicalSize::new(width, height))
             .with_resizable(false)
-            .build_vk_surface(&event_loop, instance.clone())
+            .build_vk_surface(event_loop, instance.clone())
             .expect("Couldn't build surface");
-        (surface, event_loop)
+        surface
     }
 
+    /// Picks out a physical device that has the lowest score (best performing device), and is deemed "suitable"
     fn pick_physical_device<W>(
         instance: &Arc<Instance>, device_extensions: DeviceExtensions, surface: &Surface<W>,
     ) -> usize {
@@ -304,6 +314,7 @@ impl VkBackend {
         *physical_device_index
     }
 
+    /// From a physical device, create a logical device, that is our method of talking to the physical device
     fn create_device(
         instance: &Arc<Instance>, physical_device_index: usize, device_extensions: DeviceExtensions,
     ) -> (Arc<Device>, Vec<Arc<Queue>>) {
@@ -315,10 +326,6 @@ impl VkBackend {
             .queue_families()
             .map(|family| QueueCreateInfo::family(family))
             .collect();
-
-        // NOTE: the tutorial recommends passing the validation layers as well
-        // for legacy reasons (if ENABLE_VALIDATION_LAYERS is true). Vulkano handles that
-        // for us internally.
 
         // create logical device
         let (device, queues) = Device::new(
@@ -335,12 +342,14 @@ impl VkBackend {
         (device, queues.collect())
     }
 
+    /// Creates a swap chain, which we will render to
     fn create_swap_chain(
         instance: &Arc<Instance>, surface: &Arc<Surface<Window>>, physical_device_index: usize, device: &Arc<Device>,
         graphics_queue: &Arc<Queue>, present_queue: &Arc<Queue>, width: u32, height: u32,
     ) -> (Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>) {
         let physical_device = PhysicalDevice::from_index(&instance, physical_device_index).unwrap();
 
+        // Find out the capabilities of the device given this surface
         let capabilities = physical_device
             .surface_capabilities(surface, SurfaceInfo::default())
             .expect("failed to get surface capabilities");
@@ -354,20 +363,24 @@ impl VkBackend {
             .expect("Cannot get surface present modes")
             .collect();
 
-        // determine desired swapchain properties
+        // based on thosse capabilities, pick out formats and modes
         let surface_format = Self::choose_swap_surface_format(available_formats);
         let present_mode = Self::choose_swap_present_mode(available_present_modes);
         let extent = Self::choose_swap_extent(&capabilities, width, height);
 
+        // number of swap chain images
         let mut image_count = capabilities.min_image_count + 1;
         if capabilities.max_image_count.is_some() && image_count > capabilities.max_image_count.unwrap() {
             image_count = capabilities.max_image_count.unwrap();
         }
 
+        // what this swapchain image is going to be used for
+        // This is for colour attachment to a framebuffer
         let image_usage = ImageUsage {
             color_attachment: true,
             ..ImageUsage::none()
         };
+        // how to share swapchain resources.
         let sharing = if graphics_queue == present_queue {
             Sharing::Exclusive
         } else {
