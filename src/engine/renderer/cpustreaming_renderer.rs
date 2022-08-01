@@ -1,19 +1,28 @@
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 
 use log::error;
 use vulkano::{
-    buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess},
-    command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo},
-    image::{view::ImageView, ImageAccess, SwapchainImage},
+    buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
+    command_buffer::{
+        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo, PrimaryCommandBuffer,
+        RenderingAttachmentInfo, RenderingInfo,
+    },
+    descriptor_set::{
+        layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
+        PersistentDescriptorSet, WriteDescriptorSet,
+    },
+    image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage},
     pipeline::{
         graphics::{
+            color_blend::ColorBlendState,
             input_assembly::InputAssemblyState,
             render_pass::PipelineRenderingCreateInfo,
             viewport::{Viewport, ViewportState},
         },
-        GraphicsPipeline,
+        GraphicsPipeline, Pipeline, PipelineBindPoint,
     },
     render_pass::{LoadOp, StoreOp},
+    sampler::{Sampler, SamplerCreateInfo},
     swapchain::{acquire_next_image, AcquireError},
     sync::{FlushError, GpuFuture},
 };
@@ -27,35 +36,47 @@ pub struct CPUStreamingRenderer {
     viewport:           Viewport,
     attachment_views:   Vec<Arc<ImageView<SwapchainImage<Window>>>>,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
+
+    frame_staging_buffer: Arc<CpuBufferPool<u32>>,
+    frame_image:          Arc<AttachmentImage>,
+    framebuffer:          Vec<u32>,
+    set:                  Arc<PersistentDescriptorSet>,
 }
 
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
         src: "
-                    #version 450
-                    out gl_PerVertex {
-                        vec4 gl_Position;
-                    };
-                    
-                    layout(location = 0) out vec3 fragColor;
-                    
-                    vec2 positions[3] = vec2[](
-                        vec2(0.0, -0.5),
-                        vec2(0.5, 0.5),
-                        vec2(-0.5, 0.5)
-                    );
-                    
-                    vec3 colors[3] = vec3[](
-                        vec3(1.0, 0.0, 0.0),
-                        vec3(0.0, 1.0, 0.0),
-                        vec3(0.0, 0.0, 1.0)
-                    );
-                    void main() {
-                        gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-                        fragColor = colors[gl_VertexIndex];
-                    }
-                "
+            #version 450
+            out gl_PerVertex {
+                vec4 gl_Position;
+            };
+            
+            layout(location = 0) out vec3 fragColor;
+            
+            vec2 positions[6] = vec2[](
+                vec2(-1.0, -1.0),
+                vec2(-1.0, 1.0),
+                vec2(1.0, -1.0),
+                
+                vec2(1.0, 1.0),
+                vec2(-1.0, 1.0),
+                vec2(1.0, -1.0)
+            );
+            
+            vec3 colors[6] = vec3[](
+                vec3(1.0, 0.0, 0.0),
+                vec3(0.0, 1.0, 0.0),
+                vec3(0.0, 0.0, 1.0),
+                vec3(1.0, 0.0, 0.0),
+                vec3(0.0, 1.0, 0.0),
+                vec3(0.0, 0.0, 1.0)
+            );
+            void main() {
+                gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+                fragColor = colors[gl_VertexIndex];
+            }
+        "
     }
 }
 
@@ -63,21 +84,43 @@ mod fs {
     vulkano_shaders::shader! {
         ty: "fragment",
         src: "
-                    #version 450
-                    layout(location = 0) in vec3 fragColor;
-                    layout(location = 0) out vec4 f_color;
-                    void main() {
-                        f_color = vec4(fragColor, 1.0);
-                    }
-                "
+            #version 450
+            layout(location = 0) in vec3 fragColor;
+            layout(location = 0) out vec4 f_color;
+
+            layout(set = 0, binding = 0) uniform sampler2D tex;
+
+            in vec4 gl_FragCoord;
+
+            vec2 iResolution = vec2(800,600);
+
+            float rand(vec2 co){
+                return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+            }
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / iResolution.y;
+                f_color = texture(tex, uv) + rand(uv);
+            }
+        "
     }
 }
 
 impl CPUStreamingRenderer {
     pub fn new(backend: Arc<VkBackend>) -> Self {
+        // vertex and fragment shaders
         let vs = vs::load(backend.device.clone()).unwrap();
         let fs = fs::load(backend.device.clone()).unwrap();
 
+        // dimensions of our viewport
+        let dimensions = backend.swap_chain_images[0].dimensions().width_height();
+        let viewport = Viewport {
+            origin:      [0.0, 0.0],
+            dimensions:  [dimensions[0] as f32, dimensions[1] as f32],
+            depth_range: 0.0..1.0,
+        };
+
+        // Set up our graphics pipeline
         let pipeline = GraphicsPipeline::start()
             .render_pass(PipelineRenderingCreateInfo {
                 // We specify a single color attachment that will be rendered to. When we begin
@@ -92,20 +135,12 @@ impl CPUStreamingRenderer {
             // which one.
             .vertex_shader(vs.entry_point("main").unwrap(), ())
             // Use a resizable viewport set to draw over the entire window
-            .viewport_state(ViewportState::viewport_dynamic_scissor_irrelevant())
+            .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport.clone()]))
             // See `vertex_shader`.
             .fragment_shader(fs.entry_point("main").unwrap(), ())
             // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
             .build(backend.device.clone())
             .unwrap();
-
-        let dimensions = backend.swap_chain_images[0].dimensions().width_height();
-
-        let viewport = Viewport {
-            origin:      [0.0, 0.0],
-            dimensions:  [dimensions[0] as f32, dimensions[1] as f32],
-            depth_range: 0.0..1.0,
-        };
 
         let attachment_views = backend
             .swap_chain_images
@@ -115,16 +150,51 @@ impl CPUStreamingRenderer {
 
         let previous_frame_end = Some(vulkano::sync::now(backend.device.clone()).boxed());
 
+        // We write to this buffer from the CPU side, where each frame will be uploaded to the GPU
+        let frame_staging_buffer = Arc::new(CpuBufferPool::upload(backend.device.clone()));
+
+        // the destination image that will be sampled
+        let frame_image = AttachmentImage::with_usage(
+            backend.device.clone(),
+            dimensions,
+            backend.swap_chain.image_format(),
+            ImageUsage {
+                transfer_dst: true,
+                sampled: true,
+                ..ImageUsage::none()
+            },
+        )
+        .unwrap();
+
+        // CPU local frame buffer
+        let framebuffer = vec![120 + (150 << 8); 800 * 600 * 4];
+
+        let layout = pipeline.layout().set_layouts().get(0).unwrap();
+        let sampler = Sampler::new(backend.device.clone(), SamplerCreateInfo::simple_repeat_linear()).unwrap();
+        let image_view = ImageView::new_default(frame_image.clone()).unwrap();
+        let set = PersistentDescriptorSet::new(
+            layout.clone(),
+            [WriteDescriptorSet::image_view_sampler(0, image_view, sampler.clone())],
+        )
+        .unwrap();
+
         Self {
             backend,
             pipeline,
             viewport,
             attachment_views,
             previous_frame_end,
+            frame_staging_buffer,
+            frame_image,
+            framebuffer,
+            set,
         }
     }
 
     pub fn render(&mut self) {
+        // grab a sub buffer, and prepare data to be uploaded
+        let sub_buffer = self.frame_staging_buffer.chunk(self.framebuffer.clone()).unwrap();
+
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
         // Calling this function polls various fences in order to determine what the GPU has
@@ -163,6 +233,13 @@ impl CPUStreamingRenderer {
         .unwrap();
 
         builder
+            .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
+                sub_buffer,
+                self.frame_image.clone(),
+            ))
+            .unwrap();
+
+        builder
             // Before we can draw, we have to *enter a render pass*. We specify which
             // attachments we are going to use for rendering here, which needs to match
             // what was previously specified when creating the pipeline.
@@ -197,7 +274,13 @@ impl CPUStreamingRenderer {
             // Since we used an `EmptyPipeline` object, the objects have to be `()`.
             .set_viewport(0, [self.viewport.clone()])
             .bind_pipeline_graphics(self.pipeline.clone())
-            .draw(3, 1, 0, 0)
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.pipeline.layout().clone(),
+                0,
+                self.set.clone(),
+            )
+            .draw(6, 1, 0, 0)
             .unwrap()
             // We leave the render pass.
             .end_rendering()
