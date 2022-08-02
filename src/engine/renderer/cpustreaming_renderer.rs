@@ -1,20 +1,15 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use log::error;
 use vulkano::{
-    buffer::{BufferUsage, CpuBufferPool, TypedBufferAccess},
+    buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
-        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo, PrimaryCommandBuffer,
-        RenderingAttachmentInfo, RenderingInfo,
+        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo, RenderingAttachmentInfo, RenderingInfo,
     },
-    descriptor_set::{
-        layout::{DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorSetLayoutCreateInfo, DescriptorType},
-        PersistentDescriptorSet, WriteDescriptorSet,
-    },
+    descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     image::{attachment::AttachmentImage, view::ImageView, ImageAccess, ImageUsage, SwapchainImage},
     pipeline::{
         graphics::{
-            color_blend::ColorBlendState,
             input_assembly::InputAssemblyState,
             render_pass::PipelineRenderingCreateInfo,
             viewport::{Viewport, ViewportState},
@@ -37,10 +32,8 @@ pub struct CPUStreamingRenderer {
     attachment_views:   Vec<Arc<ImageView<SwapchainImage<Window>>>>,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
 
-    frame_staging_buffer: Arc<CpuBufferPool<u32>>,
-    frame_image:          Arc<AttachmentImage>,
-    framebuffer:          Vec<u32>,
-    set:                  Arc<PersistentDescriptorSet>,
+    frame_image: Arc<AttachmentImage>,
+    set:         Arc<PersistentDescriptorSet>,
 }
 
 mod vs {
@@ -100,7 +93,7 @@ mod fs {
 
             void main() {
                 vec2 uv = gl_FragCoord.xy / iResolution.y;
-                f_color = texture(tex, uv) + rand(uv);
+                f_color = texture(tex, uv);
             }
         "
     }
@@ -150,9 +143,6 @@ impl CPUStreamingRenderer {
 
         let previous_frame_end = Some(vulkano::sync::now(backend.device.clone()).boxed());
 
-        // We write to this buffer from the CPU side, where each frame will be uploaded to the GPU
-        let frame_staging_buffer = Arc::new(CpuBufferPool::upload(backend.device.clone()));
-
         // the destination image that will be sampled
         let frame_image = AttachmentImage::with_usage(
             backend.device.clone(),
@@ -165,9 +155,6 @@ impl CPUStreamingRenderer {
             },
         )
         .unwrap();
-
-        // CPU local frame buffer
-        let framebuffer = vec![120 + (150 << 8); 800 * 600 * 4];
 
         let layout = pipeline.layout().set_layouts().get(0).unwrap();
         let sampler = Sampler::new(backend.device.clone(), SamplerCreateInfo::simple_repeat_linear()).unwrap();
@@ -184,16 +171,23 @@ impl CPUStreamingRenderer {
             viewport,
             attachment_views,
             previous_frame_end,
-            frame_staging_buffer,
             frame_image,
-            framebuffer,
             set,
         }
     }
 
-    pub fn render(&mut self) {
-        // grab a sub buffer, and prepare data to be uploaded
-        let sub_buffer = self.frame_staging_buffer.chunk(self.framebuffer.clone()).unwrap();
+    pub fn render(&mut self, framebuffer: Vec<u32>) {
+        // We write to this buffer from the CPU side, where each frame will be uploaded to the GPU
+        let sub_buffer = CpuAccessibleBuffer::from_iter(
+            self.backend.device.clone(),
+            BufferUsage {
+                transfer_src: true,
+                ..BufferUsage::none()
+            },
+            false,
+            framebuffer,
+        )
+        .unwrap();
 
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
