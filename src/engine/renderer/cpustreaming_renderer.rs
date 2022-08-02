@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use log::error;
+use log::{error, trace};
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
@@ -32,8 +32,9 @@ pub struct CPUStreamingRenderer {
     attachment_views:   Vec<Arc<ImageView<SwapchainImage<Window>>>>,
     previous_frame_end: Option<Box<dyn GpuFuture>>,
 
-    frame_image: Arc<AttachmentImage>,
-    set:         Arc<PersistentDescriptorSet>,
+    frame_staging_buffer: Arc<CpuAccessibleBuffer<[u32]>>,
+    frame_image:          Arc<AttachmentImage>,
+    set:                  Arc<PersistentDescriptorSet>,
 }
 
 mod vs {
@@ -143,6 +144,20 @@ impl CPUStreamingRenderer {
 
         let previous_frame_end = Some(vulkano::sync::now(backend.device.clone()).boxed());
 
+        // We write to this buffer from the CPU side, where each frame will be uploaded to the GPU
+        let frame_staging_buffer = unsafe {
+            CpuAccessibleBuffer::uninitialized_array(
+                backend.device.clone(),
+                (dimensions[0] * dimensions[1]) as u64,
+                BufferUsage {
+                    transfer_src: true,
+                    ..BufferUsage::none()
+                },
+                false,
+            )
+            .unwrap()
+        };
+
         // the destination image that will be sampled
         let frame_image = AttachmentImage::with_usage(
             backend.device.clone(),
@@ -171,29 +186,29 @@ impl CPUStreamingRenderer {
             viewport,
             attachment_views,
             previous_frame_end,
+            frame_staging_buffer,
             frame_image,
             set,
         }
     }
 
     pub fn render(&mut self, framebuffer: Vec<u32>) {
-        // We write to this buffer from the CPU side, where each frame will be uploaded to the GPU
-        let sub_buffer = CpuAccessibleBuffer::from_iter(
-            self.backend.device.clone(),
-            BufferUsage {
-                transfer_src: true,
-                ..BufferUsage::none()
-            },
-            false,
-            framebuffer,
-        )
-        .unwrap();
-
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
         // Calling this function polls various fences in order to determine what the GPU has
         // already processed, and frees the resources that are no longer needed.
         self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+        {
+            match self.frame_staging_buffer.write() {
+                Ok(mut writer) => writer.copy_from_slice(&framebuffer[..]),
+                Err(e) => {
+                    // if the frame rate is super high, we could be trying to write to this buffer *while* the previous frame is still copying
+                    // from the buffer to the image! In this case just log it and skip over
+                    trace!("Frame staging buffer write error: {}", e);
+                }
+            }
+        }
 
         // Before we can draw on the output, we have to *acquire* an image from the swapchain. If
         // no image is available (which happens if you submit draw commands too quickly), then the
@@ -228,7 +243,7 @@ impl CPUStreamingRenderer {
 
         builder
             .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
-                sub_buffer,
+                self.frame_staging_buffer.clone(),
                 self.frame_image.clone(),
             ))
             .unwrap();

@@ -12,16 +12,18 @@ mod engine;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+const WIDTH: u32 = 800;
+const HEIGHT: u32 = 600;
+
 fn main() {
     let mut log_builder = env_logger::Builder::new();
     log_builder.filter(None, log::LevelFilter::Debug).init();
 
     let event_loop = EventLoop::new();
-    let backend = Arc::new(VkBackend::new(&event_loop, "LumenRay", 800, 600));
+    let backend = Arc::new(VkBackend::new(&event_loop, "LumenRay", WIDTH, HEIGHT));
     let mut renderer = CPUStreamingRenderer::new(backend);
 
-    // CPU local frame buffer
-    let framebuffer: Vec<u32> = vec![120 + (150 << 8); 800 * 600];
+    let mut n = 0;
 
     event_loop.run(move |ev, _, control_flow| match ev {
         Event::WindowEvent {
@@ -32,6 +34,9 @@ fn main() {
         }
 
         Event::RedrawEventsCleared => {
+            n += 1;
+            // CPU local frame buffer
+            let framebuffer: Vec<u32> = vec![(n % 255) + (150 << 8); (WIDTH * HEIGHT) as usize];
             renderer.render(framebuffer.clone());
         }
 
