@@ -139,9 +139,9 @@ impl VkBackend {
     fn choose_swap_present_mode(mut available_present_modes: Vec<PresentMode>) -> PresentMode {
         // score present modes based on how desirable they are, with lowest being best
         available_present_modes.sort_by_key(|m| match m {
-            PresentMode::Mailbox => 1,
+            PresentMode::Mailbox => 12,
             PresentMode::Immediate => 2,
-            PresentMode::Fifo => 0,
+            PresentMode::Fifo => 20,
             _ => 100,
         });
         *available_present_modes.first().expect("No present modes")

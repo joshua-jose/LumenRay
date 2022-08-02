@@ -25,6 +25,9 @@ fn main() {
 
     let mut n = 0;
 
+    // CPU local frame buffer
+    let mut framebuffer: Vec<u32> = vec![(n % 255) + (150 << 8); (WIDTH * HEIGHT) as usize];
+
     event_loop.run(move |ev, _, control_flow| match ev {
         Event::WindowEvent {
             event: WindowEvent::CloseRequested,
@@ -35,9 +38,8 @@ fn main() {
 
         Event::RedrawEventsCleared => {
             n += 1;
-            // CPU local frame buffer
-            let framebuffer: Vec<u32> = vec![(n % 255) + (150 << 8); (WIDTH * HEIGHT) as usize];
-            renderer.render(framebuffer.clone());
+            framebuffer.fill((n % 255) + (150 << 8));
+            renderer.render(&framebuffer);
         }
 
         _ => (),

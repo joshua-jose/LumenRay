@@ -26,3 +26,6 @@ glam = "0.21.2"
 panic = "abort"
 debug = true
 
+
+[profile.dev]
+opt-level=1

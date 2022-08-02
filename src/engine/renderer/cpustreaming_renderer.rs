@@ -192,7 +192,7 @@ impl CPUStreamingRenderer {
         }
     }
 
-    pub fn render(&mut self, framebuffer: Vec<u32>) {
+    pub fn render(&mut self, framebuffer: &[u32]) {
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
         // Calling this function polls various fences in order to determine what the GPU has
@@ -201,7 +201,7 @@ impl CPUStreamingRenderer {
 
         {
             match self.frame_staging_buffer.write() {
-                Ok(mut writer) => writer.copy_from_slice(&framebuffer[..]),
+                Ok(mut writer) => writer.copy_from_slice(framebuffer),
                 Err(e) => {
                     // if the frame rate is super high, we could be trying to write to this buffer *while* the previous frame is still copying
                     // from the buffer to the image! In this case just log it and skip over
