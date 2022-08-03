@@ -120,9 +120,9 @@ impl VkBackend {
         // look for the right queue families 
         // The device may have multiple queue families, that can only perform one task (graphics, present, transfer, compute)
         // we look for at least one family that can do these
-        p.queue_families().find(|&q| q.supports_graphics()).is_some() &&
-        p.queue_families().find(|&q| q.supports_compute()).is_some() &&
-        p.queue_families().find(|&q| q.supports_surface(&surface).unwrap_or(false)).is_some()
+        p.queue_families().any(|q| q.supports_graphics()) &&
+        p.queue_families().any(|q| q.supports_compute()) &&
+        p.queue_families().any(|q| q.supports_surface(surface).unwrap_or(false))
     }
 
     /// Picks a colour format,and a colour space to use.
@@ -139,9 +139,9 @@ impl VkBackend {
     fn choose_swap_present_mode(mut available_present_modes: Vec<PresentMode>) -> PresentMode {
         // score present modes based on how desirable they are, with lowest being best
         available_present_modes.sort_by_key(|m| match m {
-            PresentMode::Mailbox => 12,
+            PresentMode::Mailbox => 1,
             PresentMode::Immediate => 2,
-            PresentMode::Fifo => 20,
+            PresentMode::Fifo => 0,
             _ => 100,
         });
         *available_present_modes.first().expect("No present modes")
@@ -152,7 +152,7 @@ impl VkBackend {
         // try to determine the dimensions of the swapchain.
         // we would like this to be our window width and height.
         if let Some(current_extent) = capabilities.current_extent {
-            return current_extent;
+            current_extent
         } else {
             let mut actual_extent = [width, height];
             actual_extent[0] =
@@ -168,7 +168,7 @@ impl VkBackend {
     // ----------------------------------------------------------------------------------------------------------------------
 
     /// Gets the queues that we want from a list of queues, that was provided by the device.
-    fn get_queues(queues: &Vec<Arc<Queue>>, surface: &Surface<Window>) -> (Arc<Queue>, Arc<Queue>, Arc<Queue>) {
+    fn get_queues(queues: &[Arc<Queue>], surface: &Surface<Window>) -> (Arc<Queue>, Arc<Queue>, Arc<Queue>) {
         let graphics_queue = queues
             .iter()
             .find(|q| q.family().supports_graphics())
@@ -260,20 +260,19 @@ impl VkBackend {
         //
         // This returns a `vulkano::swapchain::Surface` object that contains both a cross-platform winit
         // window and a cross-platform Vulkan surface that represents the surface of the window.
-        let surface = WindowBuilder::new()
+        WindowBuilder::new()
             .with_title(title)
             .with_inner_size(winit::dpi::LogicalSize::new(width, height))
             .with_resizable(false)
             .build_vk_surface(event_loop, instance.clone())
-            .expect("Couldn't build surface");
-        surface
+            .expect("Couldn't build surface")
     }
 
     /// Picks out a physical device that has the lowest score (best performing device), and is deemed "suitable"
     fn pick_physical_device<W>(
         instance: &Arc<Instance>, device_extensions: DeviceExtensions, surface: &Surface<W>,
     ) -> usize {
-        let mut sorted_devices = PhysicalDevice::enumerate(&instance).enumerate().collect::<Vec<_>>();
+        let mut sorted_devices = PhysicalDevice::enumerate(instance).enumerate().collect::<Vec<_>>();
         sorted_devices.sort_by_key(|(_, p)| {
             // We assign a lower score to device types that are likely to be faster/better.
             match p.properties().device_type {
@@ -290,7 +289,7 @@ impl VkBackend {
             .supported_extensions()
             .is_superset_of(&device_extensions)
         {
-            let missing = device_extensions.difference(&sorted_devices[0].1.supported_extensions());
+            let missing = device_extensions.difference(sorted_devices[0].1.supported_extensions());
             warn!(
                 "Ideal device is missing extensions: {:?}\nTry updating your graphics drivers",
                 missing
@@ -300,7 +299,7 @@ impl VkBackend {
         // find the first device deemed "suitable"
         let (physical_device_index, physical_device) = sorted_devices
             .iter()
-            .find(|(_, device)| Self::is_device_suitable(&device, device_extensions, surface))
+            .find(|(_, device)| Self::is_device_suitable(device, device_extensions, surface))
             .expect("failed to find a suitable GPU!");
 
         // debug info
@@ -319,13 +318,10 @@ impl VkBackend {
         instance: &Arc<Instance>, physical_device_index: usize, device_extensions: DeviceExtensions,
     ) -> (Arc<Device>, Vec<Arc<Queue>>) {
         // Now initializing the device. This is probably the most important object of Vulkan.
-        let physical_device = PhysicalDevice::from_index(&instance, physical_device_index).unwrap();
+        let physical_device = PhysicalDevice::from_index(instance, physical_device_index).unwrap();
 
         // get a list of every queue family available
-        let queue_create_infos = physical_device
-            .queue_families()
-            .map(|family| QueueCreateInfo::family(family))
-            .collect();
+        let queue_create_infos = physical_device.queue_families().map(QueueCreateInfo::family).collect();
 
         // create logical device
         let (device, queues) = Device::new(
@@ -343,11 +339,12 @@ impl VkBackend {
     }
 
     /// Creates a swap chain, which we will render to
+    #[allow(clippy::too_many_arguments)]
     fn create_swap_chain(
         instance: &Arc<Instance>, surface: &Arc<Surface<Window>>, physical_device_index: usize, device: &Arc<Device>,
         graphics_queue: &Arc<Queue>, present_queue: &Arc<Queue>, width: u32, height: u32,
     ) -> (Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>) {
-        let physical_device = PhysicalDevice::from_index(&instance, physical_device_index).unwrap();
+        let physical_device = PhysicalDevice::from_index(instance, physical_device_index).unwrap();
 
         // Find out the capabilities of the device given this surface
         let capabilities = physical_device

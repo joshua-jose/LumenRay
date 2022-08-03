@@ -13,6 +13,7 @@ A Real Time Ray Tracing Engine written in rust
 * implement many post processing effects in shaders (depth of field, bloom, material roughness, fog, volumetric lighting, glare)
 * ImGUI
 * move ray marching to compute shader
+* Use a BVH (AABB) for ray traversal
 * different types of renderers to support a compute based ray engine, CPU based, and vk ray tracing pipeline based (ComputeRenderer,CPUStreamingRenderer,AcceleratedRenderer)
 * Scene serialize/deserialize (maybe into yaml/toml)
 * physics

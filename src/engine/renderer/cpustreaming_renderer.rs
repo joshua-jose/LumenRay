@@ -37,6 +37,7 @@ pub struct CPUStreamingRenderer {
     set:                  Arc<PersistentDescriptorSet>,
 }
 
+#[allow(clippy::needless_question_mark)]
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
@@ -74,6 +75,7 @@ mod vs {
     }
 }
 
+#[allow(clippy::needless_question_mark)]
 mod fs {
     vulkano_shaders::shader! {
         ty: "fragment",
@@ -93,7 +95,7 @@ mod fs {
             }
 
             void main() {
-                vec2 uv = gl_FragCoord.xy / iResolution.y;
+                vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 f_color = texture(tex, uv);
             }
         "
@@ -176,7 +178,7 @@ impl CPUStreamingRenderer {
         let image_view = ImageView::new_default(frame_image.clone()).unwrap();
         let set = PersistentDescriptorSet::new(
             layout.clone(),
-            [WriteDescriptorSet::image_view_sampler(0, image_view, sampler.clone())],
+            [WriteDescriptorSet::image_view_sampler(0, image_view, sampler)],
         )
         .unwrap();
 
