@@ -6,10 +6,9 @@ use rayon::prelude::*;
 struct HitInfo {
     object_id: usize,
     position:  Vec3,
+    direction: Vec3,
+    normal:    Vec3,
 }
-
-pub const MAX_MARCH_DISTANCE: f32 = 50.0;
-pub const SMALL_DISTANCE: f32 = 0.001;
 
 pub struct CPURayEngine {
     //scene:       Scene, // or take the hecs::world directly if it's more performant (but less desirable)
@@ -34,60 +33,46 @@ impl CPURayEngine {
         // let origin = camera.position;
         // let width, height = camera.viewport_width, camera.viewport_height
         let now = std::time::Instant::now();
+
         if self.sight_rays.len() != width * height {
             self.sight_rays.resize(width * height, Ray::default());
         }
 
-        // generate rays
-        //TODO: try gen parallel
-        /*
-        for y in 0..height {
-            for x in 0..width {
-                let u = 2.0 * (x as f32 - (0.5 * (width as f32))) / height as f32; // divide u by height to account for aspect ratio
-                let v = 2.0 * (y as f32 - (0.5 * (height as f32))) / height as f32;
+        let camera_pos = vec3(0.0, 0.0, 0.0);
 
-                let i = x + (y * width);
-                self.sight_rays[i] = Ray::new(vec3(0.0, 0.0, 0.0), vec3(u, v, 1.0).normalize());
-            }
-        }
-         */
         self.sight_rays.par_iter_mut().enumerate().for_each(|(i, r)| {
+            // generate direction vectors from screen space UV coords
             let x = i % width;
             let y = i / width;
 
             let u = 2.0 * (x as f32 - (0.5 * (width as f32))) / height as f32; // divide u by height to account for aspect ratio
             let v = 2.0 * (y as f32 - (0.5 * (height as f32))) / height as f32;
+            let direction = vec3(u, v, 1.0);
 
-            *r = Ray::new(vec3(0.0, 0.0, 0.0), vec3(u, v, 1.0).normalize());
+            *r = Ray::new(camera_pos, direction);
+
+            Self::cast_ray(r); // calculate whether this ray hits any scene geometry
         });
 
-        Self::cast_rays(&mut self.sight_rays);
+        //Self::cast_rays(&mut self.sight_rays);
         // TODO: return hitinfo rather than ray?
         println!("Ray casting time: {:.2?}", now.elapsed());
         &self.sight_rays
     }
 
-    // internal ray casting function
-    fn cast_rays(rays: &mut [Ray]) {
+    fn cast_ray(ray: &mut Ray) {
+        //TODO: if there are multiple spheres in the scene, calculate with SoA(structure of arrays) approach?
         let sphere_pos = vec3(0.0, 0.0, 5.0);
-        let sphere_radius = 1.0;
+        let sphere_radius: f32 = 1.0;
 
-        rays.par_iter_mut().for_each(|ray| {
-            //TODO: try actual intersection func
-            let mut total_distance = 0.0;
+        // quadratic formula constants for line-sphere intersection
+        let a = ray.direction.length_squared();
+        let b = 2.0 * (ray.direction.dot(ray.origin - sphere_pos));
+        let c = (ray.origin - sphere_pos).length_squared() - sphere_radius.powi(2);
 
-            while total_distance < MAX_MARCH_DISTANCE {
-                //let distance = spheres.min_by_key(|s| sphere.sdf());
-                let distance = (ray.position - sphere_pos).length() - sphere_radius;
-
-                if distance < SMALL_DISTANCE {
-                    ray.hit = 0;
-                    break;
-                }
-
-                total_distance += distance;
-                ray.march(distance);
-            }
-        });
+        let discrim = b.powi(2) - (4.0 * a * c);
+        if discrim >= 0.0 {
+            ray.hit = 0;
+        }
     }
 }
