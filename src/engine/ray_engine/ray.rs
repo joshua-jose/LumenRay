@@ -4,19 +4,12 @@ use crate::engine::Vec3;
 pub struct Ray {
     pub origin:    Vec3,
     pub direction: Vec3,
-    pub hit:       u32,
 }
 
 impl Ray {
     #[allow(dead_code)]
     #[inline]
-    pub const fn new(origin: Vec3, direction: Vec3) -> Self {
-        Self {
-            origin,
-            direction,
-            hit: u32::MAX,
-        }
-    }
+    pub const fn new(origin: Vec3, direction: Vec3) -> Self { Self { origin, direction } }
 
     #[allow(dead_code)]
     #[inline]

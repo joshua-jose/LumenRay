@@ -96,6 +96,7 @@ mod fs {
 
             void main() {
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
+                uv.y = 1.0-uv.y;  // flip
                 f_color = texture(tex, uv);
             }
         "
