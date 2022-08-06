@@ -1,13 +1,12 @@
 #![feature(core_intrinsics)]
-use std::sync::Arc;
 
+use engine::vk_backend::BufferType;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
 };
 
-use crate::engine::vec3;
-use crate::engine::{ray_engine::CPURayEngine, renderer::CPUStreamingRenderer, vk_backend::VkBackend};
+use crate::engine::{renderer::CPURenderer, vk_backend::VkBackend};
 
 mod engine;
 
@@ -22,14 +21,21 @@ fn main() {
     log_builder.filter(None, log::LevelFilter::Debug).init();
 
     let event_loop = EventLoop::new();
-    let backend = Arc::new(VkBackend::new(&event_loop, "LumenRay", WIDTH, HEIGHT));
-    let mut renderer = CPUStreamingRenderer::new(backend);
-    let mut ray_engine = CPURayEngine::new();
+    let mut backend = VkBackend::new(&event_loop, "LumenRay", WIDTH, HEIGHT);
 
-    let mut n = 0;
+    let vs = vs::load(backend.device.clone()).unwrap();
+    let fs = fs::load(backend.device.clone()).unwrap();
+    backend.streaming_setup(vs.entry_point("main").unwrap(), fs.entry_point("main").unwrap());
+    // TODO: let VSync be an option here
+    /*
+    TODO: merge renderer and ray engine, since they already perform tightly knit jobs, and
+    will effectively be one eventually
+    */
+    // TODO: move contents of engine/ into src/, its redundant
+    let renderer = CPURenderer::new();
 
     // CPU local frame buffer
-    let mut framebuffer: Vec<u32> = vec![(n % 255) + (150 << 8); (WIDTH * HEIGHT) as usize];
+    let mut framebuffer: Vec<BufferType> = vec![0; (WIDTH * HEIGHT) as usize];
 
     event_loop.run(move |ev, _, control_flow| match ev {
         Event::WindowEvent {
@@ -40,35 +46,81 @@ fn main() {
         }
 
         Event::RedrawEventsCleared => {
-            let rays = ray_engine.cast_sight_rays(WIDTH as usize, HEIGHT as usize);
-            n += 1;
-            //let colour_wave_1 = 255.0 / 2.0 * (1.0 + (n as f32 / 20.0).sin());
-            //let colour_wave_2 = 255.0 / 2.0 * (1.0 + (n as f32 / 20.0).cos());
+            // let now = std::time::Instant::now();
+            // println!("Frame time: {:.2?}", now.elapsed());
 
-            //let colour_wave_1 = colour_wave_1.trunc() as u32;
-            //let colour_wave_2 = colour_wave_2.trunc() as u32;
+            renderer.draw(&mut framebuffer, WIDTH as usize, HEIGHT as usize);
+            backend.streaming_submit(&framebuffer);
 
-            for (i, h) in rays.iter().enumerate() {
-                if h.is_some() {
-                    let info = h.as_ref().unwrap();
-                    let normal = info.normal;
-                    let col = normal.dot((vec3(0.0, 4.0, -1.0) - info.position).normalize()).max(0.0) * 255.0;
-
-                    framebuffer[i] = col.trunc() as u32;
-                    // framebuffer[i] = ((1.0 + normal.x) * 255.0 / 2.0).trunc() as u32
-                    //     + ((((1.0 + normal.y) * 255.0 / 2.0).trunc() as u32) << 8)
-                    //     + ((((1.0 + normal.z) * 255.0 / 2.0).trunc() as u32) << 16);
-
-                    //framebuffer[i] = 255;
-                    //colour_wave_1 + (100 << 16);
-                } else {
-                    framebuffer[i] = 0; //(colour_wave_2 << 8) + (150 << 16);
-                }
-            }
-            //framebuffer.fill(colour_wave_1.trunc() as u32 + ((colour_wave_2.trunc() as u32) << 8) + (150 << 16));
-            renderer.render(&framebuffer);
+            //
         }
 
         _ => (),
     });
+}
+
+#[allow(clippy::needless_question_mark)]
+mod vs {
+    vulkano_shaders::shader! {
+        ty: "vertex",
+        src: "
+            #version 450
+            out gl_PerVertex {
+                vec4 gl_Position;
+            };
+            
+            layout(location = 0) out vec3 fragColor;
+            
+            vec2 positions[6] = vec2[](
+                vec2(-1.0, -1.0),
+                vec2(-1.0, 1.0),
+                vec2(1.0, -1.0),
+                
+                vec2(1.0, 1.0),
+                vec2(-1.0, 1.0),
+                vec2(1.0, -1.0)
+            );
+            
+            vec3 colors[6] = vec3[](
+                vec3(1.0, 0.0, 0.0),
+                vec3(0.0, 1.0, 0.0),
+                vec3(0.0, 0.0, 1.0),
+                vec3(1.0, 0.0, 0.0),
+                vec3(0.0, 1.0, 0.0),
+                vec3(0.0, 0.0, 1.0)
+            );
+            void main() {
+                gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+                fragColor = colors[gl_VertexIndex];
+            }
+        "
+    }
+}
+
+#[allow(clippy::needless_question_mark)]
+mod fs {
+    vulkano_shaders::shader! {
+        ty: "fragment",
+        src: "
+            #version 450
+            layout(location = 0) in vec3 fragColor;
+            layout(location = 0) out vec4 f_color;
+
+            layout(set = 0, binding = 0) uniform sampler2D tex;
+
+            in vec4 gl_FragCoord;
+
+            vec2 iResolution = vec2(800,600);
+
+            float rand(vec2 co){
+                return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+            }
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / iResolution.xy;
+                uv.y = 1.0-uv.y;  // flip
+                f_color = texture(tex, uv);
+            }
+        "
+    }
 }

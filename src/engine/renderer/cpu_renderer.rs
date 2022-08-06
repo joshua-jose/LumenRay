@@ -1,5 +1,5 @@
 use super::Ray;
-use crate::engine::{vec3, Vec3};
+use crate::engine::{vec3, vk_backend::BufferType, Vec3};
 use rayon::prelude::*;
 
 //TODO: move to own file
@@ -10,27 +10,51 @@ pub struct HitInfo {
     pub normal:    Vec3,
 }
 
-pub struct CPURayEngine {
+pub struct CPURenderer {
     //scene:       Scene, // or take the hecs::world directly if it's more performant (but less desirable)
     //entity_view: u32, // replace with hecs::PreparedView or LumenRay wrapper equiv
 }
 
 // on draw, create direction vectors from transform
 
-impl CPURayEngine {
+impl CPURenderer {
     pub fn new() -> Self { Self {} }
 
+    pub fn draw(&self, framebuffer: &mut Vec<BufferType>, width: usize, height: usize) {
+        let hits = self.cast_sight_rays(width, height);
+
+        framebuffer.par_iter_mut().enumerate().for_each(|(i, pix)| {
+            let h = &hits[i];
+            if h.is_some() {
+                let info = h.as_ref().unwrap();
+                let normal = info.normal;
+                let col = 25.5 + normal.dot((vec3(0.0, 4.0, -1.0) - info.position).normalize()).max(0.0) * 255.0;
+
+                *pix = col.min(255.0).trunc() as u32;
+                // framebuffer[i] = ((1.0 + normal.x) * 255.0 / 2.0).trunc() as u32
+                //     + ((((1.0 + normal.y) * 255.0 / 2.0).trunc() as u32) << 8)
+                //     + ((((1.0 + normal.z) * 255.0 / 2.0).trunc() as u32) << 16);
+
+                //framebuffer[i] = 255;
+                //colour_wave_1 + (100 << 16);
+            } else {
+                *pix = 0; //(colour_wave_2 << 8) + (150 << 16);
+            }
+        });
+    }
+
     #[allow(clippy::uninit_vec)]
-    pub fn cast_sight_rays(&mut self /* , camera: &Camera*/, width: usize, height: usize) -> Vec<Option<HitInfo>> {
+    pub fn cast_sight_rays(&self /* , camera: &Camera*/, width: usize, height: usize) -> Vec<Option<HitInfo>> {
         // generate rays based on camera info
         // ....
         // let origin = camera.position;
         // let width, height = camera.viewport_width, camera.viewport_height
-        let now = std::time::Instant::now();
+        // let rot_matrix = camera.get_rotation_matrix()
+        // let fov = camera.get_fov()
 
         let mut sight_rays = Vec::with_capacity(width * height);
         unsafe {
-            // we will not read from any of these locations until we have written them! This is safe, and so much faster.
+            // we will not read from any of these locations until we have written them! This is safe, and so much faster than pre-initializing them.
             sight_rays.set_len(width * height);
         }
 
@@ -52,13 +76,12 @@ impl CPURayEngine {
         });
 
         //Self::cast_rays(&mut self.sight_rays);
-        println!("Ray casting time: {:.2?}", now.elapsed());
         sight_rays
     }
 
     fn cast_ray(ray: &mut Ray) -> Option<HitInfo> {
         //TODO: if there are multiple spheres in the scene, calculate with SoA(structure of arrays) approach?
-        let sphere_pos = vec3(0.0, 0.0, 5.0);
+        let sphere_pos = vec3(0.0, 0.0, 3.0);
         let sphere_radius: f32 = 1.0;
 
         // TODO: split out ray-sphere intersection into function, then test analytical vs geometric approach

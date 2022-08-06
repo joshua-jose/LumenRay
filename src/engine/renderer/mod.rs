@@ -1,3 +1,5 @@
-mod cpustreaming_renderer;
+mod cpu_renderer;
+mod ray;
 
-pub use cpustreaming_renderer::*;
+pub use cpu_renderer::*;
+pub use ray::*;
