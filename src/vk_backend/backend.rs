@@ -45,6 +45,8 @@ use winit::{
 
 use super::{BufferType, StreamingPipeline};
 
+// TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
+
 const ENABLE_VALIDATION_LAYERS: bool = true;
 const VALIDATION_LAYERS: &[&str] = &["VK_LAYER_KHRONOS_validation"];
 

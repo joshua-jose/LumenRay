@@ -1,3 +1,4 @@
+use log::debug;
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -13,6 +14,7 @@ const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 
 // TODO: consider renaming vk_backend to vk?
+// TODO: pass resolution to shaders
 
 fn main() {
     let mut log_builder = env_logger::Builder::new();
@@ -40,10 +42,10 @@ fn main() {
         }
 
         Event::RedrawEventsCleared => {
-            // let now = std::time::Instant::now();
-            // println!("Frame time: {:.2?}", now.elapsed());
-
+            let now = std::time::Instant::now();
             renderer.draw(&mut framebuffer, WIDTH as usize, HEIGHT as usize);
+            debug!("Draw time: {:.2?}", now.elapsed());
+
             backend.streaming_submit(&framebuffer);
         }
 
@@ -51,12 +53,11 @@ fn main() {
     });
 }
 
-//TODO: move into file
 #[allow(clippy::needless_question_mark)]
 mod vs {
     vulkano_shaders::shader! {
         ty: "vertex",
-        path:"src/renderer/shaders/render.vert"
+        path:"shaders/cpu_render.vert"
     }
 }
 
@@ -64,6 +65,6 @@ mod vs {
 mod fs {
     vulkano_shaders::shader! {
         ty: "fragment",
-        path:"src/renderer/shaders/render.frag"
+        path:"shaders/cpu_render.frag"
     }
 }
