@@ -1,10 +1,10 @@
 use std::intrinsics::unlikely;
 
 use super::Ray;
-use crate::{vec3, vk_backend::BufferType, Vec3};
+use crate::{vec3, Reflectable, Vec3, Vec3Swizzles, Vec4};
 use rayon::prelude::*;
 
-//TODO: move to own file
+//TODO: move to own file / change implementation
 pub struct HitInfo {
     pub object_id: u32,
     pub position:  Vec3,
@@ -26,27 +26,61 @@ const NO_HIT: f32 = f32::MAX; // value to return when no intersection
 impl CPURenderer {
     pub fn new() -> Self { Self {} }
 
-    pub fn draw(&self, framebuffer: &mut Vec<BufferType>, width: usize, height: usize) {
+    pub fn draw(&self, framebuffer: &mut Vec<Vec4>, width: usize, height: usize) {
         let hits = self.cast_sight_rays(width, height);
+
         unsafe { N += 1 };
         // TODO: Add to scene
-        let light_pos = vec3(4.0 * (unsafe { N as f32 / 20.0 }).sin(), 4.0, -1.0);
+        let light_pos = vec3(4.0 * (unsafe { N as f32 / 20.0 }).sin(), 2.0, -1.0);
 
         framebuffer.par_iter_mut().enumerate().for_each(|(i, pix)| {
             let h = &hits[i];
             if h.is_some() {
                 let info = h.as_ref().unwrap();
-                let normal = info.normal;
-                let col = 25.5 + normal.dot((light_pos - info.position).normalize()).max(0.0) * 255.0;
 
-                *pix = col.min(255.0).trunc() as u32;
+                // calculate phong shading on point
+                let col = Self::phong(
+                    vec3(0.0, 0.0, 1.0),
+                    info.normal,
+                    light_pos - info.position,
+                    info.direction,
+                    20.0,
+                    0.1,
+                    1.0,
+                    0.0,
+                );
 
-                //framebuffer[i] = 255;
-                //colour_wave_1 + (100 << 16);
+                *pix = col.xyzz();
+                //*pix = (col.z * 255.0).min(255.0).trunc() as u32;
             } else {
-                *pix = 0; //(colour_wave_2 << 8) + (150 << 16);
+                *pix = Vec4::splat(0.2);
             }
         });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[inline]
+    fn phong(
+        col: Vec3, normal: Vec3, vec_to_light: Vec3, view_dir: Vec3, light_intensity: f32, mat_ambient: f32,
+        mat_diffuse: f32, mat_specular: f32,
+    ) -> Vec3 {
+        let shininess = 4.0;
+
+        let distance_to_light_sqd = vec_to_light.length_squared();
+        let light_intensity = light_intensity / distance_to_light_sqd; // k/d^2
+        let vec_to_light_norm = vec_to_light / distance_to_light_sqd.sqrt(); // normalize vector
+        let light_reflection_vector = vec_to_light_norm.reflect(normal);
+
+        // Phong shading algorithm
+        let diffuse = mat_diffuse * light_intensity * vec_to_light_norm.dot(normal).max(0.0);
+
+        let specular = if diffuse > 0.0 {
+            mat_specular * light_intensity * light_reflection_vector.dot(view_dir).max(0.0).powf(shininess)
+        } else {
+            0.0
+        };
+
+        (mat_ambient + diffuse + specular) * col
     }
 
     #[allow(clippy::uninit_vec)]

@@ -9,7 +9,8 @@ use vulkano::{
 };
 use winit::window::Window;
 
-pub type BufferType = u32;
+pub type BufferType = f32;
+pub const ELEM_PER_PIX: u32 = 4; // 4 f32s per pixel
 
 pub struct StreamingPipeline {
     pub pipeline:           Arc<GraphicsPipeline>,

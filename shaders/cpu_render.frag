@@ -24,8 +24,8 @@ vec3 aces_tonemap(vec3 color){
 
     vec3 col = clamp(m2 * (a / b), 0.0, 1.0);
 
-    //return col;
-	return pow(col, vec3(1.0 / 2.2));	// gamma corrected
+    return col;
+	//return pow(col, vec3(1.0 / 2.2));	// gamma corrected
 }
 
 void main() {

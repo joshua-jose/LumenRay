@@ -5,3 +5,4 @@
 // scene.prepared_query
 // scene.prepared_view
 
+struct Scene {}

@@ -43,7 +43,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use super::{BufferType, StreamingPipeline};
+use super::{BufferType, StreamingPipeline, ELEM_PER_PIX};
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
 
@@ -463,7 +463,7 @@ impl VkBackend {
         let frame_staging_buffer = unsafe {
             CpuAccessibleBuffer::uninitialized_array(
                 self.device.clone(),
-                (dimensions[0] * dimensions[1]) as u64,
+                (dimensions[0] * dimensions[1] * ELEM_PER_PIX) as u64,
                 BufferUsage {
                     transfer_src: true,
                     ..BufferUsage::none()
@@ -477,7 +477,7 @@ impl VkBackend {
         let frame_image = AttachmentImage::with_usage(
             self.device.clone(),
             dimensions,
-            swap_chain.image_format(), /* Format::R32G32B32A32_SFLOAT, */
+            Format::R32G32B32A32_SFLOAT,
             ImageUsage {
                 transfer_dst: true,
                 sampled: true,
@@ -563,6 +563,7 @@ impl VkBackend {
         //
         // Note that we have to pass a queue family when we create the command buffer. The command
         // buffer will only be executable on that given queue family.
+        //TODO: make this multiple submit? cache command buffer
         let mut builder = AutoCommandBufferBuilder::primary(
             self.device.clone(),
             self.graphics_queue.family(),

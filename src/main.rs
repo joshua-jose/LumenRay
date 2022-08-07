@@ -4,8 +4,11 @@ use winit::{
     event_loop::{ControlFlow, EventLoop},
 };
 
-use lumen_ray::vk_backend::BufferType;
-use lumen_ray::{renderer::CPURenderer, vk_backend::VkBackend};
+use lumen_ray::{
+    renderer::CPURenderer,
+    vk_backend::{VkBackend, ELEM_PER_PIX},
+};
+use lumen_ray::{vk_backend::BufferType, Vec4};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -31,7 +34,7 @@ fn main() {
     let renderer = CPURenderer::new();
 
     // CPU local frame buffer
-    let mut framebuffer: Vec<BufferType> = vec![0; (WIDTH * HEIGHT) as usize];
+    let mut framebuffer: Vec<Vec4> = vec![Vec4::splat(0.0); (WIDTH * HEIGHT) as usize];
 
     event_loop.run(move |ev, _, control_flow| match ev {
         Event::WindowEvent {
@@ -41,12 +44,22 @@ fn main() {
             *control_flow = ControlFlow::Exit;
         }
 
-        Event::RedrawEventsCleared => {
-            let now = std::time::Instant::now();
+        Event::MainEventsCleared => {
+            //let frame_start = std::time::Instant::now();
             renderer.draw(&mut framebuffer, WIDTH as usize, HEIGHT as usize);
-            debug!("Draw time: {:.2?}", now.elapsed());
+            //debug!("Draw time: {:.2?}", frame_start.elapsed());
 
-            backend.streaming_submit(&framebuffer);
+            // reinterpet framebuffer as a slice of f32s
+            let buffer_pix = unsafe {
+                std::slice::from_raw_parts_mut(
+                    framebuffer.as_mut_ptr() as *mut BufferType,
+                    (WIDTH * HEIGHT * ELEM_PER_PIX) as usize,
+                )
+            };
+            //let now = std::time::Instant::now();
+            backend.streaming_submit(buffer_pix);
+            //debug!("Submit time: {:.2?}", now.elapsed());
+            //debug!("Frame time: {:.2?}", frame_start.elapsed());
         }
 
         _ => (),
