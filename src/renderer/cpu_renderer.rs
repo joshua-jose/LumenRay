@@ -1,5 +1,5 @@
 use super::Ray;
-use crate::engine::{vec3, vk_backend::BufferType, Vec3};
+use crate::{vec3, vk_backend::BufferType, Vec3};
 use rayon::prelude::*;
 
 //TODO: move to own file
@@ -17,6 +17,7 @@ pub struct CPURenderer {
 
 // on draw, create direction vectors from transform
 
+#[allow(clippy::new_without_default)] // default construction doesn't make sense here
 impl CPURenderer {
     pub fn new() -> Self { Self {} }
 
@@ -84,8 +85,6 @@ impl CPURenderer {
         let sphere_pos = vec3(0.0, 0.0, 3.0);
         let sphere_radius: f32 = 1.0;
 
-        // TODO: split out ray-sphere intersection into function, then test analytical vs geometric approach
-        // TODO: calculate and return position and normals, then use for colour
         //TODO: implement multiple objects, find min distance
 
         let distance = Self::ray_sphere_intersect(ray, sphere_pos, sphere_radius);

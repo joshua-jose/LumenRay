@@ -1,3 +1,5 @@
+#![feature(core_intrinsics)]
+
 pub mod renderer;
 pub mod scene;
 pub mod vk_backend;
