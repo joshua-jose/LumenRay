@@ -1,14 +1,49 @@
-/*
-struct Entity {
-    id: hecs::Entity,
-    scene: Weak<RefCell<Scene>> // gets a weak pointer, so we don't take ownership of the scene
+use std::{cell::RefCell, error::Error, fmt, sync::Weak};
+
+use hecs::{Component, DynamicBundle, World};
+
+use super::{NoSuchScene, SceneResult};
+
+pub struct Entity {
+    pub(crate) id:    hecs::Entity,
+    pub(crate) world: Weak<RefCell<World>>, // gets a weak pointer, so we don't take ownership of the scene
 }
 
-impl Entity{
-    fn add_component(component: hecs::Component){
-        self.scene.add_component(self.id, component);
+impl Entity {
+    pub fn add_components(&mut self, components: impl DynamicBundle) -> SceneResult<()> {
+        let world = self.world.upgrade().ok_or(NoSuchScene)?;
+        world.borrow_mut().insert(self.id, components).unwrap();
+
+        Ok(())
     }
-    fn add_components(){};
-    fn remove_component(){};
+    pub fn add_component(&mut self, component: impl Component) -> SceneResult<()> {
+        let world = self.world.upgrade().ok_or(NoSuchScene)?;
+        world.borrow_mut().insert_one(self.id, component).unwrap();
+        Ok(())
+    }
+    pub fn remove_component<C: Component>(&mut self) -> SceneResult<()> {
+        let world = self.world.upgrade().ok_or(NoSuchScene)?;
+        world.borrow_mut().remove_one::<C>(self.id).unwrap();
+        Ok(())
+    }
+
+    pub fn destroy(&mut self) -> SceneResult<()> {
+        let world = self.world.upgrade().ok_or(NoSuchScene)?;
+        world.borrow_mut().despawn(self.id).expect("This entity doesn't exist");
+        Ok(())
+    }
 }
-*/
+
+/// Error indicating that no entity with a particular ID exists
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct NoSuchEntity;
+
+impl fmt::Display for NoSuchEntity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.pad("no such entity") }
+}
+
+impl Error for NoSuchEntity {}
+
+impl From<hecs::NoSuchEntity> for NoSuchEntity {
+    fn from(_: hecs::NoSuchEntity) -> Self { NoSuchEntity }
+}

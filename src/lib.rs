@@ -15,5 +15,7 @@ trait Reflectable {
 }
 
 impl Reflectable for Vec3 {
-    fn reflect(&self, normal: Vec3) -> Vec3 { *self - normal * (2.0 * normal.dot(*self)) }
+    fn reflect(&self, normal: Vec3) -> Vec3 {
+        *self - normal * (2.0 * normal.dot(*self))
+    }
 }

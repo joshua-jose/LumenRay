@@ -1,7 +1,10 @@
-use std::intrinsics::unlikely;
+use std::{cell::RefCell, intrinsics::unlikely};
 
 use super::Ray;
-use crate::{vec3, Reflectable, Vec3, Vec3Swizzles, Vec4};
+use crate::{
+    scene::{Query, Scene, SphereRenderQuery},
+    vec3, Reflectable, Vec3, Vec3Swizzles, Vec4,
+};
 use rayon::prelude::*;
 
 //TODO: move to own file / change implementation
@@ -12,9 +15,9 @@ pub struct HitInfo {
     pub normal:    Vec3,
 }
 
-pub struct CPURenderer {
+pub struct CPURenderer<'a> {
     //scene:       Scene, // or take the hecs::world directly if it's more performant (but less desirable)
-    //entity_view: u32, // replace with hecs::PreparedView or LumenRay wrapper equiv
+    sphere_query: RefCell<Query<SphereRenderQuery<'a>>>,
 }
 
 // on draw, create direction vectors from transform
@@ -23,15 +26,21 @@ static mut N: i32 = 0;
 const NO_HIT: f32 = f32::MAX; // value to return when no intersection
 
 #[allow(clippy::new_without_default)] // default construction doesn't make sense here
-impl CPURenderer {
-    pub fn new() -> Self { Self {} }
+impl CPURenderer<'_> {
+    pub fn new() -> Self {
+        Self {
+            sphere_query: RefCell::new(Query::default()),
+        }
+    }
 
-    pub fn draw(&self, framebuffer: &mut Vec<Vec4>, width: usize, height: usize) {
-        let hits = self.cast_sight_rays(width, height);
+    pub fn draw(&self, framebuffer: &mut Vec<Vec4>, width: usize, height: usize, scene: &mut Scene) {
+        //TODO: could generate these as we iterate through the framebuffer
+        let hits = self.cast_sight_rays(width, height, scene);
 
         unsafe { N += 1 };
         // TODO: Add to scene
         let light_pos = vec3(4.0 * (unsafe { N as f32 / 20.0 }).sin(), 2.0, -1.0);
+        let sky_colour = Vec4::splat(0.2);
 
         framebuffer.par_iter_mut().enumerate().for_each(|(i, pix)| {
             let h = &hits[i];
@@ -39,6 +48,7 @@ impl CPURenderer {
                 let info = h.as_ref().unwrap();
 
                 // calculate phong shading on point
+
                 let col = Self::phong(
                     vec3(0.0, 0.0, 1.0),
                     info.normal,
@@ -51,15 +61,16 @@ impl CPURenderer {
                 );
 
                 *pix = col.xyzz();
-                //*pix = (col.z * 255.0).min(255.0).trunc() as u32;
             } else {
-                *pix = Vec4::splat(0.2);
+                *pix = sky_colour;
             }
         });
     }
 
     #[allow(clippy::too_many_arguments)]
     #[inline]
+    //TODO: should take mat argument instead
+    //TODO: Blinn Phong?
     fn phong(
         col: Vec3, normal: Vec3, vec_to_light: Vec3, view_dir: Vec3, light_intensity: f32, mat_ambient: f32,
         mat_diffuse: f32, mat_specular: f32,
@@ -84,7 +95,10 @@ impl CPURenderer {
     }
 
     #[allow(clippy::uninit_vec)]
-    pub fn cast_sight_rays(&self /* , camera: &Camera*/, width: usize, height: usize) -> Vec<Option<HitInfo>> {
+    pub fn cast_sight_rays(
+        &self, /* , camera: &Camera*/
+        width: usize, height: usize, scene: &mut Scene,
+    ) -> Vec<Option<HitInfo>> {
         //TODO: replace with actual camera object
         // generate rays based on camera info
         // ....
@@ -101,6 +115,11 @@ impl CPURenderer {
 
         let camera_pos = vec3(0.0, 0.0, -5.0);
 
+        // Query objects in the scene
+        //TODO: pass a struct of query results to ray casting function in future
+        let mut query = self.sphere_query.borrow_mut();
+        let sphere_res = query.query(scene).unwrap().map(|(_, s)| s).collect::<Vec<_>>();
+
         // use par_iter_mut to calculate across all cores
         hits.par_iter_mut().enumerate().for_each(|(i, h)| {
             // generate direction vectors from screen space UV coords
@@ -113,32 +132,31 @@ impl CPURenderer {
 
             let mut r = Ray::new(camera_pos, direction);
 
-            *h = Self::cast_ray(&mut r); // calculate whether this ray hits any scene geometry
+            *h = Self::cast_ray(&mut r, &sphere_res); // calculate whether this ray hits any scene geometry
         });
 
         //Self::cast_rays(&mut self.sight_rays);
         hits
     }
 
-    fn cast_ray(ray: &mut Ray) -> Option<HitInfo> {
+    fn cast_ray(ray: &mut Ray, scene: &[SphereRenderQuery]) -> Option<HitInfo> {
         //TODO: if there are multiple spheres in the scene, calculate with SoA(structure of arrays) approach?
-        let sphere_pos = vec3(0.0, 0.0, 3.0);
-        let sphere_radius: f32 = 1.0;
 
-        //TODO: implement multiple objects, find min distance
+        // go through the scene, find the smallest distance
+        let mut distance = NO_HIT;
+        let mut nearest_entity: usize = usize::MAX;
 
-        let distance = [
-            Self::ray_sphere_intersect(ray, sphere_pos, sphere_radius),
-            Self::ray_sphere_intersect(ray, vec3(-2.0, 0.0, 3.0), 0.5),
-            Self::ray_sphere_intersect(ray, vec3(2.0, 0.0, 3.0), 0.5),
-            Self::ray_sphere_intersect(ray, vec3(0.0, 1.0, 3.0), 0.5),
-        ]
-        .into_iter()
-        .reduce(f32::min)
-        .unwrap();
+        for (i, s) in scene.iter().enumerate() {
+            let obj_distance = Self::ray_sphere_intersect(ray, s.transform.position, s.render.radius);
+            if obj_distance < distance {
+                distance = obj_distance;
+                nearest_entity = i;
+            };
+        }
 
         if distance != NO_HIT {
             let position = ray.origin + (distance * ray.direction.normalize());
+            let sphere_pos = scene[nearest_entity].transform.position;
             let normal = (position - sphere_pos).normalize();
             Some(HitInfo {
                 object_id: 0,

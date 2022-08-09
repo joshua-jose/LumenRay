@@ -1,0 +1,3 @@
+struct NameComponent {
+    name: String,
+}
