@@ -5,24 +5,26 @@
 // scene.prepared_query
 // scene.prepared_view
 
-use super::{Entity, NoSuchEntity};
+use super::{Entity, NoSuchEntity, Query, RenderScene, SphereRenderQuery};
+use crate::vec3;
 use hecs::{DynamicBundle, World};
 use std::{cell::RefCell, error::Error, fmt, sync::Arc};
 
-pub struct Scene {
+pub struct Scene<'a> {
     pub(super) world: Arc<RefCell<World>>,
+    sphere_query:     RefCell<Query<SphereRenderQuery<'a>>>,
 }
 
 /*  TODO: figure out the performance impact of all these wrappers,
     especially for code that will run every game loop (querying and viewing related code),
     the amount of borrow checking and ref counting should be kept down to like once per game loop
 */
-// TODO: consider using raw pointers for dealing with scene stuff
 
-impl Scene {
+impl Scene<'_> {
     pub fn empty() -> Self {
         Self {
-            world: Arc::new(RefCell::new(World::new())),
+            world:        Arc::new(RefCell::new(World::new())),
+            sphere_query: RefCell::new(Query::default()),
         }
     }
     pub fn create_entity(&mut self, components: impl DynamicBundle) -> Entity {
@@ -56,9 +58,20 @@ impl Scene {
             Err(_) => Err(NoSuchEntity),
         }
     }
+
+    pub fn query_scene_objects(&mut self) -> RenderScene {
+        //! Query won't be valid if Scene is destroyed
+        let query = self.sphere_query.as_ptr();
+        let spheres = unsafe { (*query).query(self).unwrap().map(|(_, s)| s).collect::<Vec<_>>() };
+
+        RenderScene {
+            spheres,
+            light_pos: vec3(0.0, 0.0, 0.0),
+        }
+    }
 }
 
-impl Default for Scene {
+impl Default for Scene<'_> {
     fn default() -> Self { Self::empty() }
 }
 

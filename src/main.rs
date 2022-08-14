@@ -4,11 +4,11 @@ use winit::{
 };
 
 use lumen_ray::{
-    renderer::{CPURenderer, SphereRenderComponent, TransformComponent},
+    renderer::{CPURenderer, MaterialComponent, SphereRenderComponent, TransformComponent, SOFT_GREEN, WHITE},
     scene::Scene,
-    vk_backend::{VkBackend, ELEM_PER_PIX},
+    vk::{VkBackend, ELEM_PER_PIX},
 };
-use lumen_ray::{vk_backend::BufferType, Vec4};
+use lumen_ray::{vk::BufferType, Vec4};
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -19,12 +19,10 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 
-// TODO: consider renaming vk_backend to vk?
 // TODO: move all this to engine class
 
 // TODO: write tests and add codecov
 // TODO: add bench with default scene
-// TODO: add some script that can take frame times and produce distribution/histogram
 
 // TODO: audit game loop for unnecessary performance hits
 
@@ -48,23 +46,47 @@ fn main() {
     scene.create_entity((
         TransformComponent::with_pos(0.0, 0.0, 3.0),
         SphereRenderComponent { radius: 1.0 },
+        MaterialComponent::basic(),
     ));
     scene.create_entity((
         TransformComponent::with_pos(-2.0, 0.0, 3.0),
         SphereRenderComponent { radius: 1.0 },
+        MaterialComponent {
+            colour:       WHITE,
+            ambient:      0.05,
+            diffuse:      0.03,
+            specular:     0.2,
+            shininess:    16.0,
+            reflectivity: 1.0,
+            emissive:     0.0,
+        },
     ));
     scene.create_entity((
         TransformComponent::with_pos(2.0, 0.0, 3.0),
         SphereRenderComponent { radius: 1.0 },
+        MaterialComponent {
+            colour:       WHITE,
+            ambient:      0.05,
+            diffuse:      0.03,
+            specular:     0.2,
+            shininess:    16.0,
+            reflectivity: 1.0,
+            emissive:     0.0,
+        },
     ));
     scene.create_entity((
         TransformComponent::with_pos(0.0, 2.0, 3.0),
         SphereRenderComponent { radius: 1.0 },
+        MaterialComponent::basic(),
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(0.0, 2.0, 8.0),
-        SphereRenderComponent { radius: 5.0 },
+        TransformComponent::with_pos(0.0, -101.0, 0.0),
+        SphereRenderComponent { radius: 100.0 },
+        MaterialComponent {
+            colour: SOFT_GREEN,
+            ..MaterialComponent::basic()
+        },
     ));
 
     let renderer = CPURenderer::new();

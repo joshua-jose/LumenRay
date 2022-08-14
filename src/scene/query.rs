@@ -1,4 +1,4 @@
-use crate::renderer::{SphereRenderComponent, TransformComponent};
+use crate::renderer::{MaterialComponent, SphereRenderComponent, TransformComponent};
 use hecs::{PreparedQuery, PreparedQueryIter, Query as HecsQuery};
 
 use super::{NoSuchScene, Scene, SceneResult};
@@ -7,6 +7,7 @@ use super::{NoSuchScene, Scene, SceneResult};
 pub struct SphereRenderQuery<'a> {
     pub transform: &'a TransformComponent,
     pub render:    &'a SphereRenderComponent,
+    pub material:  &'a MaterialComponent,
 }
 
 pub struct Query<Q: HecsQuery> {

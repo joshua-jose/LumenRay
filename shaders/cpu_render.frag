@@ -5,8 +5,6 @@ layout(set = 0, binding = 0) uniform sampler2D tex;
 
 in vec4 gl_FragCoord;
 
-//vec2 iResolution = vec2(800,600);
-
 vec3 aces_tonemap(vec3 color){	
 	mat3 m1 = mat3(
         0.59719, 0.07600, 0.02840,
@@ -29,6 +27,15 @@ vec3 aces_tonemap(vec3 color){
 	//return toSRGB(col);	// gamma corrected
 }
 
+vec3 ACESFilm(vec3 x){
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return (x*(a*x+b))/(x*(c*x+d)+e);
+}
+
 vec3 toSRGB(vec3 col)
 {
     vec3 a = 12.92 * col;
@@ -43,7 +50,7 @@ void main() {
     vec2 uv = gl_FragCoord.xy / iResolution;
     uv.y = 1.0-uv.y;  // flip
 
-    vec3 colour = aces_tonemap(texture(tex, uv).xyz);
+    vec3 colour = ACESFilm(texture(tex, uv).xyz);
 
     fragColor = vec4(colour,1.0);
 }
