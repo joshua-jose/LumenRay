@@ -6,6 +6,7 @@ use super::SOFT_BLUE;
 
 pub struct TransformComponent {
     pub position: Vec3,
+    // rotation
 }
 
 impl TransformComponent {
@@ -19,8 +20,12 @@ pub struct SphereRenderComponent {
     pub radius: f32,
 }
 
+pub struct PlaneRenderComponent {
+    pub normal: Vec3,
+}
+
 pub struct MaterialComponent {
-    pub colour:       Vec3,
+    pub colour:       Vec3, // TODO: Replace with texture
     pub ambient:      f32,
     pub diffuse:      f32, // aka albedo
     pub specular:     f32,
@@ -46,3 +51,6 @@ impl MaterialComponent {
 impl Default for MaterialComponent {
     fn default() -> Self { Self::basic() }
 }
+
+pub struct CameraComponent {}
+pub struct PointLightComponent {}

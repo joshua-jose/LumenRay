@@ -4,8 +4,12 @@ use winit::{
 };
 
 use lumen_ray::{
-    renderer::{CPURenderer, MaterialComponent, SphereRenderComponent, TransformComponent, SOFT_GREEN, WHITE},
+    renderer::{
+        CPURenderer, MaterialComponent, PlaneRenderComponent, SphereRenderComponent, TransformComponent, SOFT_GREEN,
+        WHITE,
+    },
     scene::Scene,
+    vec3,
     vk::{VkBackend, ELEM_PER_PIX},
 };
 use lumen_ray::{vk::BufferType, Vec4};
@@ -81,8 +85,10 @@ fn main() {
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(0.0, -101.0, 0.0),
-        SphereRenderComponent { radius: 100.0 },
+        TransformComponent::with_pos(0.0, -1.0, 0.0),
+        PlaneRenderComponent {
+            normal: vec3(0.0, 1.0, 0.0),
+        },
         MaterialComponent {
             colour: SOFT_GREEN,
             ..MaterialComponent::basic()

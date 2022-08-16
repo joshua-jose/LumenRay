@@ -5,14 +5,12 @@
 // scene.prepared_query
 // scene.prepared_view
 
-use super::{Entity, NoSuchEntity, Query, RenderScene, SphereRenderQuery};
-use crate::vec3;
+use super::{Entity, NoSuchEntity, RenderScene};
 use hecs::{DynamicBundle, World};
 use std::{cell::RefCell, error::Error, fmt, sync::Arc};
 
-pub struct Scene<'a> {
+pub struct Scene {
     pub(super) world: Arc<RefCell<World>>,
-    sphere_query:     RefCell<Query<SphereRenderQuery<'a>>>,
 }
 
 /*  TODO: figure out the performance impact of all these wrappers,
@@ -20,15 +18,13 @@ pub struct Scene<'a> {
     the amount of borrow checking and ref counting should be kept down to like once per game loop
 */
 
-impl Scene<'_> {
+impl Scene {
     pub fn empty() -> Self {
         Self {
-            world:        Arc::new(RefCell::new(World::new())),
-            sphere_query: RefCell::new(Query::default()),
+            world: Arc::new(RefCell::new(World::new())),
         }
     }
     pub fn create_entity(&mut self, components: impl DynamicBundle) -> Entity {
-        //TODO: return lumenray entity
         let hecs_entity = self.world.borrow_mut().spawn(components);
         Entity {
             id:    hecs_entity,
@@ -59,19 +55,36 @@ impl Scene<'_> {
         }
     }
 
+    pub fn query<Q: hecs::Query>(&self) -> hecs::QueryBorrow<Q> {
+        let ptr = self.world.as_ptr();
+
+        unsafe { (*ptr).query::<Q>() }
+    }
+
+    pub(super) fn query_owned<Q: hecs::Query>(
+        &self,
+    ) -> Vec<(hecs::Entity, <<Q as hecs::Query>::Fetch as hecs::Fetch<'_>>::Item)> {
+        let ptr = self.world.as_ptr();
+
+        unsafe { (*ptr).query_mut::<Q>().into_iter().collect::<Vec<_>>() }
+    }
+
+    /*
+    fn entity_from_id(&mut self, hecs_entity: hecs::Entity) -> Entity {
+        Entity {
+            id:    hecs_entity,
+            world: Arc::downgrade(&self.world),
+        }
+    }
+    */
+
     pub fn query_scene_objects(&mut self) -> RenderScene {
         //! Query won't be valid if Scene is destroyed
-        let query = self.sphere_query.as_ptr();
-        let spheres = unsafe { (*query).query(self).unwrap().map(|(_, s)| s).collect::<Vec<_>>() };
-
-        RenderScene {
-            spheres,
-            light_pos: vec3(0.0, 0.0, 0.0),
-        }
+        RenderScene::from_scene(self)
     }
 }
 
-impl Default for Scene<'_> {
+impl Default for Scene {
     fn default() -> Self { Self::empty() }
 }
 
