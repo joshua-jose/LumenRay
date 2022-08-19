@@ -1,6 +1,6 @@
 // put in SphereRender, PlaneRender, BoxRender, MeshRender etc. components here...
 
-use crate::Vec3;
+use crate::{vec3, Mat3, Vec3};
 
 use super::SOFT_BLUE;
 
@@ -32,6 +32,7 @@ pub struct MaterialComponent {
     pub shininess:    f32, // aka gloss
     pub reflectivity: f32,
     pub emissive:     f32,
+    // TODO: specular tint?
 }
 
 impl MaterialComponent {
@@ -52,5 +53,26 @@ impl Default for MaterialComponent {
     fn default() -> Self { Self::basic() }
 }
 
-pub struct CameraComponent {}
-pub struct PointLightComponent {}
+pub struct CameraComponent {
+    pub pitch: f32,
+    pub yaw:   f32,
+    pub fov:   f32,
+    // exposure
+}
+
+impl CameraComponent {
+    pub fn get_rot_mat(&self) -> Mat3 {
+        let (sx, cx) = self.yaw.sin_cos();
+        let (sy, cy) = self.pitch.sin_cos();
+
+        let rot_pitch = Mat3::from_cols(vec3(1.0, 0.0, 0.0), vec3(0.0, cy, sy), vec3(0.0, -sy, cy));
+        let rot_yaw = Mat3::from_cols(vec3(cx, 0.0, -sx), vec3(0.0, 1.0, 0.0), vec3(sx, 0.0, cx));
+        rot_yaw * rot_pitch
+    }
+}
+
+pub struct PointLightComponent {
+    pub intensity: f32, // shadow softness?
+}
+
+pub struct SkyBoxComponent {}

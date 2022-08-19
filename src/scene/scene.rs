@@ -56,9 +56,17 @@ impl Scene {
     }
 
     pub fn query<Q: hecs::Query>(&self) -> hecs::QueryBorrow<Q> {
+        //TODO: add custom queryiter here which returns our entity not a hecs entity
         let ptr = self.world.as_ptr();
 
         unsafe { (*ptr).query::<Q>() }
+    }
+
+    pub fn query_mut<Q: hecs::Query>(&mut self) -> hecs::QueryMut<Q> {
+        //TODO: add custom queryiter here which returns our entity not a hecs entity
+        let ptr = self.world.as_ptr();
+
+        unsafe { (*ptr).query_mut::<Q>() }
     }
 
     pub(super) fn query_owned<Q: hecs::Query>(

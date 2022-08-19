@@ -19,9 +19,9 @@ pub struct CPURenderer {
     //scene:       Scene, // or take the hecs::world directly if it's more performant (but less desirable)
 }
 
-static mut N: i32 = 0;
 const NO_HIT: f32 = f32::MAX; // value to return when no intersection
 const SMALL_DISTANCE: f32 = 0.0001;
+const MAX_BOUNCES: u32 = 2;
 
 #[allow(clippy::new_without_default)] // default construction doesn't make sense here
 impl CPURenderer {
@@ -37,19 +37,16 @@ impl CPURenderer {
         // let rot_matrix = camera.get_rotation_matrix()
         // let fov = camera.get_fov()
 
-        unsafe { N += 1 };
-        // TODO: Add to scene
-        let light_pos = vec3(4.0 * (unsafe { N as f32 / 20.0 }).sin(), 2.0, -1.0);
-        let camera_pos = vec3(0.0, 0.0, -5.0);
-
-        let fov_deg: f32 = 90.0;
-        let zdepth = (fov_deg * 0.5).to_radians().tan().recip();
-
-        //TODO: pass a struct of query results to ray casting function in future
         //TODO: Maybe abtract this into a `Hittable`, but that would probably balloon memory usage
 
-        let mut render_scene = scene.query_scene_objects();
-        render_scene.light_pos = light_pos;
+        let render_scene = scene.query_scene_objects();
+
+        let camera = render_scene.camera;
+        let camera_pos = camera.transform.position;
+        let rot_mat = camera.camera.get_rot_mat();
+
+        let fov_deg: f32 = camera.camera.fov;
+        let zdepth = (fov_deg * 0.5).to_radians().tan().recip();
 
         //let now = std::time::Instant::now();
         framebuffer.par_iter_mut().enumerate().for_each(|(i, pix)| {
@@ -59,7 +56,7 @@ impl CPURenderer {
 
             let u = (x as f32 - (0.5 * (width as f32))) / height as f32; // divide u by height to account for aspect ratio
             let v = (y as f32 - (0.5 * (height as f32))) / height as f32;
-            let direction = vec3(u, v, zdepth).normalize();
+            let direction = rot_mat * vec3(u, v, zdepth)/* .normalize() */;
 
             let col = Self::cast_sight_ray(
                 Ray {
@@ -78,7 +75,7 @@ impl CPURenderer {
     fn cast_sight_ray(mut ray: Ray, render_scene: &RenderScene, depth: u32) -> Vec3 {
         let sky_colour = Vec3::splat(0.2);
 
-        if depth >= 2 {
+        if depth >= MAX_BOUNCES {
             return sky_colour;
         };
 
@@ -92,7 +89,8 @@ impl CPURenderer {
     }
 
     fn shade_object(ray: &mut Ray, info: HitInfo, render_scene: &RenderScene, depth: u32) -> Vec3 {
-        let vec_to_light = render_scene.light_pos - info.position;
+        let vec_to_light = render_scene.light.transform.position - info.position;
+        let light_intensity = render_scene.light.light.intensity;
         let direction = ray.direction;
         let position = info.position;
         let normal = info.normal;
@@ -115,8 +113,8 @@ impl CPURenderer {
             None => 1.0,
         };
 
-        let mut col =
-            obj_col * (material.ambient + shade * Self::phong(normal, vec_to_light, direction, 10.0, material));
+        let mut col = obj_col
+            * (material.ambient + shade * Self::phong(normal, vec_to_light, direction, light_intensity, material));
 
         if material.reflectivity > 1e-3 {
             // very cheap fresnel effect
@@ -146,15 +144,15 @@ impl CPURenderer {
         let light_reflection_vector = vec_to_light_norm.reflect(normal);
 
         // Phong shading algorithm
-        let diffuse = mat.diffuse * light_intensity * vec_to_light_norm.dot(normal).max(0.0);
+        let diffuse = vec_to_light_norm.dot(normal).max(0.0);
 
         let specular = if diffuse > 0.0 {
-            mat.specular * light_intensity * light_reflection_vector.dot(view_dir).max(0.0).powf(mat.shininess)
+            light_reflection_vector.dot(view_dir).max(0.0).powf(mat.shininess)
         } else {
             0.0
         };
         // TODO: split diffuse and specular so we can conditionally tint it
-        diffuse + specular
+        light_intensity * (mat.diffuse * diffuse + mat.specular * specular)
     }
 
     // Takes a ray through a scene, and does the raw hit detection, returning what it hit and where.
