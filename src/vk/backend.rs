@@ -488,7 +488,7 @@ impl VkBackend {
 
         // setup the image we will write to from the CPU
         let layout = pipeline.layout().set_layouts().get(0).unwrap();
-        let sampler = Sampler::new(self.device.clone(), SamplerCreateInfo::simple_repeat_linear()).unwrap();
+        let sampler = Sampler::new(self.device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap()).unwrap();
         let image_view = ImageView::new_default(frame_image.clone()).unwrap();
         let set = PersistentDescriptorSet::new(
             layout.clone(),

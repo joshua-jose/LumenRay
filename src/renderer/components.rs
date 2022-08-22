@@ -2,8 +2,6 @@
 
 use crate::{vec3, Mat3, Vec3};
 
-use super::SOFT_BLUE;
-
 pub struct TransformComponent {
     pub position: Vec3,
     // rotation
@@ -21,11 +19,37 @@ pub struct SphereRenderComponent {
 }
 
 pub struct PlaneRenderComponent {
-    pub normal: Vec3,
+    pub normal:    Vec3,
+    pub tangent:   Vec3,
+    pub bitangent: Vec3,
+}
+
+impl PlaneRenderComponent {
+    pub fn new(normal: Vec3) -> Self {
+        let normal = normal.normalize();
+        let (a, b, c) = (normal.x, normal.y, normal.z);
+
+        let tangent;
+        if a == 0.0 {
+            tangent = vec3(b, -c, 0.0).normalize();
+        } else if b == 0.0 {
+            tangent = vec3(c, -a, 0.0).normalize();
+        } else {
+            tangent = vec3(b, -a, 0.0).normalize();
+        }
+
+        let bitangent = normal.cross(tangent);
+
+        Self {
+            normal,
+            tangent,
+            bitangent,
+        }
+    }
 }
 
 pub struct MaterialComponent {
-    pub colour:       Vec3, // TODO: Replace with texture
+    pub tex_id:       u32,
     pub ambient:      f32,
     pub diffuse:      f32, // aka albedo
     pub specular:     f32,
@@ -38,7 +62,7 @@ pub struct MaterialComponent {
 impl MaterialComponent {
     pub const fn basic() -> Self {
         Self {
-            colour:       SOFT_BLUE,
+            tex_id:       0,
             ambient:      0.25,
             diffuse:      1.0,
             specular:     0.0,

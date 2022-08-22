@@ -1,11 +1,18 @@
-use std::intrinsics::unlikely;
+use std::{f32::consts::TAU, intrinsics::unlikely};
 
-use super::{MaterialComponent, Ray};
+use super::{MaterialComponent, Ray, Texture};
 use crate::{
+    renderer::srgb_to_linear,
+    rgb,
     scene::{ObjectType, RenderScene, Scene},
-    vec3, Reflectable, Vec3, Vec3Swizzles, Vec4,
+    soft_blue, vec3, Reflectable, Vec3, Vec3Swizzles, Vec4,
 };
+use log::debug;
 use rayon::prelude::*;
+
+const NO_HIT: f32 = f32::MAX; // value to return when no intersection
+const SMALL_DISTANCE: f32 = 0.0001;
+const MAX_BOUNCES: u32 = 2;
 
 //TODO: move to own file / change implementation
 //TODO: simplify render pipeline? It's quite hard to add new types of objects
@@ -13,19 +20,24 @@ pub struct HitInfo<'a> {
     pub position: Vec3,
     pub normal:   Vec3,
     pub mat:      &'a MaterialComponent,
+    pub colour:   Vec3,
 }
 
 pub struct CPURenderer {
-    //scene:       Scene, // or take the hecs::world directly if it's more performant (but less desirable)
+    textures:      Vec<Texture>,
+    texture_paths: Vec<String>,
 }
-
-const NO_HIT: f32 = f32::MAX; // value to return when no intersection
-const SMALL_DISTANCE: f32 = 0.0001;
-const MAX_BOUNCES: u32 = 2;
 
 #[allow(clippy::new_without_default)] // default construction doesn't make sense here
 impl CPURenderer {
-    pub fn new() -> Self { Self {} }
+    pub fn new() -> Self {
+        let mut renderer = Self {
+            textures:      Vec::new(),
+            texture_paths: Vec::new(),
+        };
+        renderer.get_texture_by_colour(soft_blue!()); // set a default colour in slot 0 (missing texture equivalent)
+        renderer
+    }
 
     //TODO: could pass vec, width and height as framebuffer obj.
     pub fn draw(&self, framebuffer: &mut Vec<Vec4>, width: usize, height: usize, scene: &mut Scene) {
@@ -58,7 +70,7 @@ impl CPURenderer {
             let v = (y as f32 - (0.5 * (height as f32))) / height as f32;
             let direction = rot_mat * vec3(u, v, zdepth)/* .normalize() */;
 
-            let col = Self::cast_sight_ray(
+            let col = self.cast_sight_ray(
                 Ray {
                     origin: camera_pos,
                     direction,
@@ -71,37 +83,66 @@ impl CPURenderer {
         //println!("Cast time: {:.2?}", now.elapsed());
     }
 
+    pub fn get_texture_by_path(&mut self, path: &str, uscale: f32, vscale: f32) -> u32 {
+        if let Some(idx) = self.texture_paths.iter().position(|x| x == path) {
+            idx as u32
+        } else {
+            debug!("Loading texture from path \"{}\"", path);
+            self.textures.push(Texture::from_path(path, uscale, vscale));
+            self.texture_paths.push(path.to_owned());
+
+            (self.textures.len() - 1) as u32
+        }
+    }
+    pub fn get_texture_by_colour(&mut self, colour: Vec3) -> u32 {
+        let path = format!(
+            "colour/{},{},{}",
+            (colour.x * 1024.0).round() as u16,
+            (colour.y * 1024.0).round() as u16,
+            (colour.z * 1024.0).round() as u16
+        );
+        if let Some(idx) = self.texture_paths.iter().position(|x| x == &path) {
+            idx as u32
+        } else {
+            let tex = Texture::from_colour_srgb(colour);
+
+            self.textures.push(tex);
+            self.texture_paths.push(path);
+
+            (self.textures.len() - 1) as u32
+        }
+    }
+
     //TODO: rename this to something different to the raw cast_ray
-    fn cast_sight_ray(mut ray: Ray, render_scene: &RenderScene, depth: u32) -> Vec3 {
+    fn cast_sight_ray(&self, mut ray: Ray, render_scene: &RenderScene, depth: u32) -> Vec3 {
         let sky_colour = Vec3::splat(0.2);
 
         if depth >= MAX_BOUNCES {
             return sky_colour;
         };
 
-        let h = Self::cast_ray(&mut ray, render_scene); // calculate whether this ray hits any scene geometry
+        let h = self.cast_ray(&mut ray, render_scene); // calculate whether this ray hits any scene geometry
 
         //TODO: multiple lights, implement as component
         match h {
-            Some(info) => Self::shade_object(&mut ray, info, render_scene, depth),
+            Some(info) => self.shade_object(&mut ray, info, render_scene, depth),
             None => sky_colour,
         }
     }
 
-    fn shade_object(ray: &mut Ray, info: HitInfo, render_scene: &RenderScene, depth: u32) -> Vec3 {
+    fn shade_object(&self, ray: &mut Ray, info: HitInfo, render_scene: &RenderScene, depth: u32) -> Vec3 {
         let vec_to_light = render_scene.light.transform.position - info.position;
         let light_intensity = render_scene.light.light.intensity;
         let direction = ray.direction;
         let position = info.position;
         let normal = info.normal;
         let material = info.mat;
-
-        let obj_col = material.colour;
+        let obj_col = info.colour;
 
         // Cheapo shadow hit calculation
         //TODO: proper soft shadows
         let mut shadow_ray = Ray::new(info.position + (SMALL_DISTANCE * normal), vec_to_light);
-        let shadow_h = Self::cast_ray(&mut shadow_ray, render_scene);
+        let shadow_h = self.cast_ray(&mut shadow_ray, render_scene);
         let shade = match shadow_h {
             Some(shadow_info) => {
                 if (shadow_info.position - shadow_ray.origin).length_squared() > vec_to_light.length_squared() {
@@ -121,7 +162,7 @@ impl CPURenderer {
             let fresnel = (1.0 - normal.dot(-direction)).clamp(0.0, 1.0).powi(5);
 
             let reflection_vector = direction.reflect(normal);
-            let reflection_colour = Self::cast_sight_ray(
+            let reflection_colour = self.cast_sight_ray(
                 Ray {
                     origin:    position + (reflection_vector * SMALL_DISTANCE * 3.0),
                     direction: reflection_vector,
@@ -156,7 +197,7 @@ impl CPURenderer {
     }
 
     // Takes a ray through a scene, and does the raw hit detection, returning what it hit and where.
-    fn cast_ray<'a>(ray: &mut Ray, render_scene: &'a RenderScene<'a>) -> Option<HitInfo<'a>> {
+    fn cast_ray<'a>(&self, ray: &mut Ray, render_scene: &'a RenderScene<'a>) -> Option<HitInfo<'a>> {
         //TODO: if there are multiple spheres in the scene, calculate with SoA(structure of arrays) approach?
 
         // go through the scene, find the smallest distance
@@ -187,22 +228,41 @@ impl CPURenderer {
 
             let normal;
             let mat;
+            let u: f32;
+            let v: f32;
+
             match nearest_type {
                 ObjectType::Sphere => {
                     let sphere = render_scene.get_sphere_by_id(nearest_entity).unwrap();
 
                     normal = (position - sphere.transform.position).normalize();
                     mat = sphere.material;
+
+                    u = 0.5 + f32::atan2(normal.x, -normal.z) / TAU;
+                    v = 0.5 + (normal.y / 2.0);
                 }
                 ObjectType::Plane => {
                     let plane = render_scene.get_plane_by_id(nearest_entity).unwrap();
                     normal = plane.render.normal;
+                    let tangent = plane.render.tangent;
+                    let bitangent = plane.render.bitangent;
                     mat = plane.material;
+
+                    u = tangent.dot(position);
+                    v = bitangent.dot(position);
                 }
                 _ => unreachable!(),
             };
 
-            Some(HitInfo { position, normal, mat })
+            let texture = &self.textures[mat.tex_id as usize];
+            let colour = texture.sample(u, v);
+
+            Some(HitInfo {
+                position,
+                normal,
+                mat,
+                colour,
+            })
         } else {
             None
         }
