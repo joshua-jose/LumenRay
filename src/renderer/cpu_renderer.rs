@@ -12,7 +12,7 @@ use rayon::prelude::*;
 
 const NO_HIT: f32 = f32::MAX; // value to return when no intersection
 const SMALL_DISTANCE: f32 = 0.0001;
-const MAX_BOUNCES: u32 = 2;
+const MAX_BOUNCES: u32 = 4;
 
 //TODO: move to own file / change implementation
 //TODO: simplify render pipeline? It's quite hard to add new types of objects

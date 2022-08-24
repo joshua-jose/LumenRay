@@ -10,7 +10,7 @@ pub struct TransformComponent {
 impl TransformComponent {
     pub fn with_pos(x: f32, y: f32, z: f32) -> Self {
         Self {
-            position: Vec3 { x, y, z },
+            position: Vec3::new(x, y, z),
         }
     }
 }

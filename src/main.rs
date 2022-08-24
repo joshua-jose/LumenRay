@@ -47,11 +47,11 @@ fn main() {
         SphereRenderComponent { radius: 1.0 },
         MaterialComponent {
             tex_id:       engine.get_texture_by_colour(soft_yellow!()),
-            ambient:      0.2,
+            ambient:      0.1,
             diffuse:      1.0,
             specular:     0.9,
             shininess:    32.0,
-            reflectivity: 0.1,
+            reflectivity: 0.25,
             emissive:     0.0,
         },
     ));

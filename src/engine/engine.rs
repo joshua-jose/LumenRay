@@ -43,12 +43,18 @@ impl Engine {
         let event_loop = Some(EventLoop::new());
         let mut backend = VkBackend::new(event_loop.as_ref().unwrap(), "LumenRay", width, height);
 
+        /*
         let vs = vs::load(backend.device.clone()).unwrap();
         let fs = fs::load(backend.device.clone()).unwrap();
         backend.streaming_setup(vs.entry_point("main").unwrap(), fs.entry_point("main").unwrap());
 
         // CPU local frame buffer
+
+        */
         let framebuffer: Vec<Vec4> = vec![Vec4::splat(0.0); (width * height) as usize];
+        let cs = cs::load(backend.device.clone()).unwrap();
+        backend.compute_setup(cs.entry_point("main").unwrap());
+
         let renderer = CPURenderer::new();
 
         let window = backend.surface.window();
@@ -127,6 +133,7 @@ impl Engine {
     fn render(&mut self, scene: &mut Scene, metric_file: &mut File) {
         let frame_start = std::time::Instant::now();
 
+        /*
         self.renderer
             .draw(&mut self.framebuffer, self.width as usize, self.height as usize, scene);
         //debug!("Draw time: {:.2?}", frame_start.elapsed());
@@ -147,6 +154,8 @@ impl Engine {
         };
         //let now = std::time::Instant::now();
         self.backend.streaming_submit(buffer_pix);
+        */
+        self.backend.compute_submit();
         //debug!("Submit time: {:.2?}", now.elapsed());
         //debug!("Frame time: {:.2?}", frame_start.elapsed());
     }
@@ -244,5 +253,13 @@ mod fs {
     vulkano_shaders::shader! {
         ty: "fragment",
         path:"shaders/cpu_render.frag"
+    }
+}
+
+#[allow(clippy::needless_question_mark)]
+mod cs {
+    vulkano_shaders::shader! {
+        ty: "compute",
+        path:"shaders/gpu_render.comp"
     }
 }

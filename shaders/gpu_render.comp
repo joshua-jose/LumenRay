@@ -1,0 +1,166 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform image2D img;
+
+#define FLT_MAX 3.402823466e+38
+#define FLT_MIN 1.175494351e-38
+#define DBL_MAX 1.7976931348623158e+308
+#define DBL_MIN 2.2250738585072014e-308
+#define EPSILON 0.00001
+#define UINT_MAX 4294967295
+
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+struct Sphere {
+    vec3 position;
+    float radius;
+};
+
+struct HitInfo {
+    vec3 position;
+    vec3 normal;
+};
+
+float ray_sphere_intersect(Ray ray, Sphere sphere) {
+    // vector from sphere center to ray origin.
+    vec3 c_to_o = ray.origin - sphere.position;
+
+    // quadratic formula constants for line-sphere intersection
+    float a = dot(ray.direction, ray.direction);
+    float b = 2.0 * dot(ray.direction, c_to_o);
+    float c = dot(c_to_o, c_to_o) - (sphere.radius * sphere.radius);
+
+    float d0 = FLT_MAX, d1 = FLT_MAX;
+
+    // distance of two intersection points
+    float discrim = (b * b) - (4.0 * a * c);
+
+    if (discrim >= 0.0) {
+        // now solve the quadratic, using a more stable computer friendly
+        // formula
+
+        // if the discrim is close to 0, use a faster formula ignoring
+        // discrim. This can be optimised by being looser on what is "close"
+        // to zero.
+        if (abs(discrim) <= EPSILON) {
+            d0 = -0.5 * b / a;
+            d1 = d0;
+        } else {
+            float sqrt_discrim = sqrt(discrim);
+            float q = -0.5 * (b + (sign(b) * sqrt_discrim));
+            d0 = q / a;
+            d1 = c / q;
+        }
+
+        if (d0 > d1) {
+            float temp = d0;
+            d0 = d1;
+            d1 = temp;
+        };
+
+        // negative distances mean we intersect behind, we want d0 to be the
+        // positive intersection
+        if (d0 < 0.0) {
+            d0 = d1;
+            if (d0 < 0.0) {
+                d0 = FLT_MAX;
+            }
+        }
+    }
+    return d0;
+}
+
+Sphere spheres[1] = {Sphere(vec3(0.0, 0.0, 5.0), 1.0)};
+
+HitInfo cast_ray(Ray ray) {
+    float least_dist = FLT_MAX;
+    uint hit_sphere = UINT_MAX;
+
+    for (int i = 0; i < 1; i++) {
+        float obj_dist = ray_sphere_intersect(ray, spheres[i]);
+        if (obj_dist < least_dist) {
+            least_dist = obj_dist;
+            hit_sphere = i;
+        }
+    }
+
+    if (least_dist < FLT_MAX) {
+        vec3 position = ray.origin + (least_dist * ray.direction);
+        vec3 normal = position - spheres[hit_sphere].position;
+
+        return HitInfo(position, normal);
+    } else {
+        return HitInfo(vec3(FLT_MAX), vec3(FLT_MAX));
+    }
+}
+
+float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
+            float light_intensity) {
+    float shininess = 16.0;
+    float mat_diffuse = 1.0;
+    float mat_specular = 0.5;
+
+    float dist_sqd = dot(vec_to_light, vec_to_light);
+    float light_radiance = light_intensity / dist_sqd;
+    vec3 vec_to_light_norm = vec_to_light / sqrt(dist_sqd);
+
+    vec3 light_reflection = reflect(vec_to_light_norm, normal);
+
+    float diffuse = max(dot(vec_to_light_norm, normal), 0.0);
+    float specular = 0.0;
+
+    if (diffuse > 0.0) {
+        specular =
+            pow(max(dot(light_reflection, view_direction), 0.0), shininess);
+    }
+    return light_intensity * (mat_diffuse * diffuse + mat_specular * specular);
+}
+
+vec3 shade_object(vec3 direction, HitInfo info) {
+    vec3 light_pos = vec3(0.0, 3.0, -3.0);
+    float light_intensity = 3.5;
+    float ambient = 0.1;
+    vec3 obj_col = vec3(0.6, 0.2, 0.2);
+
+    vec3 vec_to_light = light_pos - info.position;
+    vec3 position = info.position;
+    vec3 normal = info.normal;
+
+    return obj_col *
+           (ambient + phong(normal, vec_to_light, direction, light_intensity));
+}
+
+vec3 render_pixel(vec2 uv) {
+    float zdepth = 1.0;
+    mat3 rot_mat = mat3(1.0);  // Identity matrix
+
+    vec3 dir = vec3(uv, zdepth) * rot_mat;
+
+    HitInfo hit = cast_ray(Ray(vec3(0.0, 0.0, 0.0), dir));
+
+    if (hit.normal.x < FLT_MAX) {
+        return shade_object(dir, hit);
+    } else {
+        return vec3(0.7);
+    }
+}
+
+void main() {
+    if (gl_GlobalInvocationID.x >= imageSize(img).x ||
+        gl_GlobalInvocationID.y >= imageSize(img).y) {
+        return;
+    }
+
+    // -0.5..0.5 uv coords
+    vec2 uv = (gl_GlobalInvocationID.xy - (vec2(imageSize(img).xy / 2.0))) /
+              vec2(imageSize(img).y);
+    uv.y = -uv.y;
+    vec3 colour = render_pixel(uv);
+
+    imageStore(img, ivec2(gl_GlobalInvocationID.xy), vec4(colour, 0.0));
+}

@@ -1,0 +1,3 @@
+# GLSL formatting
+BasedOnStyle: Google 
+IndentWidth: 4

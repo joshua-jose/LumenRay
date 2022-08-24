@@ -3,7 +3,8 @@ use std::sync::Arc;
 use vulkano::{
     buffer::{BufferUsage, CpuAccessibleBuffer},
     command_buffer::{
-        AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo, RenderingAttachmentInfo, RenderingInfo,
+        AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, CopyBufferToImageInfo, RenderingAttachmentInfo,
+        RenderingInfo,
     },
     descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::{
@@ -24,7 +25,7 @@ use vulkano::{
             render_pass::PipelineRenderingCreateInfo,
             viewport::{Viewport, ViewportState},
         },
-        GraphicsPipeline, Pipeline, PipelineBindPoint,
+        ComputePipeline, GraphicsPipeline, Pipeline, PipelineBindPoint,
     },
     render_pass::{LoadOp, StoreOp},
     sampler::{Sampler, SamplerCreateInfo},
@@ -43,12 +44,18 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use super::{BufferType, StreamingPipeline, ELEM_PER_PIX};
+use super::{BufferType, ComputeBackend, StreamingBackend, ELEM_PER_PIX};
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
-
+#[cfg(debug_assertions)]
 const ENABLE_VALIDATION_LAYERS: bool = true;
+#[cfg(not(debug_assertions))]
+const ENABLE_VALIDATION_LAYERS: bool = false;
+
 const VALIDATION_LAYERS: &[&str] = &["VK_LAYER_KHRONOS_validation"];
+
+const COMPUTE_WORKGROUP_X: u32 = 8;
+const COMPUTE_WORKGROUP_Y: u32 = 8;
 
 pub struct VkBackend {
     pub instance:              Arc<Instance>,
@@ -62,8 +69,11 @@ pub struct VkBackend {
     pub compute_queue:         Arc<Queue>,
     pub swap_chain:            Option<Arc<Swapchain<Window>>>,
     pub swap_chain_images:     Vec<Arc<SwapchainImage<Window>>>,
+    pub attachment_views:      Vec<Arc<ImageView<SwapchainImage<Window>>>>,
+    pub previous_frame_end:    Option<Box<dyn GpuFuture>>,
 
-    pub streaming_pipeline: Option<StreamingPipeline>,
+    pub streaming_pipeline: Option<StreamingBackend>,
+    pub compute_pipeline:   Option<ComputeBackend>,
 }
 
 impl VkBackend {
@@ -81,19 +91,27 @@ impl VkBackend {
         let (device, queues) = Self::create_device(&instance, physical_device_index, device_extensions);
         let (graphics_queue, present_queue, compute_queue) = Self::get_queues(&queues, &surface);
 
+        // help with syncing
+        let previous_frame_end = Some(now(device.clone()).boxed());
+
         let mut this = Self {
             instance,
             device,
             physical_device_index,
             queues,
             surface,
+            debug_callback,
             graphics_queue,
             present_queue,
+            compute_queue,
+
             swap_chain: None,
             swap_chain_images: vec![],
-            debug_callback,
-            compute_queue,
+            attachment_views: vec![],
+            previous_frame_end,
+
             streaming_pipeline: None,
+            compute_pipeline: None,
         };
         this.create_swap_chain(width, height);
         this
@@ -387,6 +405,7 @@ impl VkBackend {
         // This is for colour attachment to a framebuffer
         let image_usage = ImageUsage {
             color_attachment: true,
+            transfer_dst: true,
             ..ImageUsage::none()
         };
         // how to share swapchain resources.
@@ -416,6 +435,12 @@ impl VkBackend {
 
         self.swap_chain = Some(swap_chain);
         self.swap_chain_images = images;
+        // get image views to write to from swapchain
+        self.attachment_views = self
+            .swap_chain_images
+            .iter()
+            .map(|image| ImageView::new_default(image.clone()).unwrap())
+            .collect::<Vec<_>>();
     }
 
     pub fn streaming_setup(&mut self, vert_s: EntryPoint, frag_s: EntryPoint) {
@@ -448,16 +473,6 @@ impl VkBackend {
             // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
             .build(self.device.clone())
             .unwrap();
-
-        // get image views to write to from swapchain
-        let attachment_views = self
-            .swap_chain_images
-            .iter()
-            .map(|image| ImageView::new_default(image.clone()).unwrap())
-            .collect::<Vec<_>>();
-
-        // help with syncing
-        let previous_frame_end = Some(now(self.device.clone()).boxed());
 
         // We write to this buffer from the CPU side, where each frame will be uploaded to the GPU
         let frame_staging_buffer = unsafe {
@@ -496,11 +511,9 @@ impl VkBackend {
         )
         .unwrap();
 
-        self.streaming_pipeline = Some(StreamingPipeline {
+        self.streaming_pipeline = Some(StreamingBackend {
             pipeline,
             viewport,
-            attachment_views,
-            previous_frame_end,
             frame_staging_buffer,
             frame_image,
             set,
@@ -514,16 +527,16 @@ impl VkBackend {
         //! to the GPU side framebuffer image,then sets up a render pass to blit that to the
         //! swapchain, after going through a few shaders.
 
-        // It is important to call this function from time to time, otherwise resources will keep
-        // accumulating and you will eventually reach an out of memory error.
-        // Calling this function polls various fences in order to determine what the GPU has
-        // already processed, and frees the resources that are no longer needed.
-        let mut pipeline = self
+        let pipeline = self
             .streaming_pipeline
             .as_mut()
             .expect("Streaming pipeline was not created");
 
-        pipeline.previous_frame_end.as_mut().unwrap().cleanup_finished();
+        // It is important to call this function from time to time, otherwise resources will keep
+        // accumulating and you will eventually reach an out of memory error.
+        // Calling this function polls various fences in order to determine what the GPU has
+        // already processed, and frees the resources that are no longer needed.
+        self.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
         // get the swapchain
         let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
@@ -601,7 +614,7 @@ impl VkBackend {
                     ..RenderingAttachmentInfo::image_view(
                         // We specify image view corresponding to the currently acquired
                         // swapchain image, to use for this attachment.
-                        pipeline.attachment_views[image_num].clone(),
+                        self.attachment_views[image_num].clone(),
                     )
                 })],
                 ..Default::default()
@@ -628,7 +641,7 @@ impl VkBackend {
         // Finish building the command buffer by calling `build`.
         let command_buffer = builder.build().unwrap();
 
-        let future = pipeline
+        let future = self
             .previous_frame_end
             .take()
             .unwrap()
@@ -646,14 +659,137 @@ impl VkBackend {
 
         match future {
             Ok(future) => {
-                pipeline.previous_frame_end = Some(future.boxed());
+                self.previous_frame_end = Some(future.boxed());
             }
             Err(FlushError::OutOfDate) => {
-                pipeline.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
+                self.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
             }
             Err(e) => {
                 error!("Failed to flush future: {:?}", e);
-                pipeline.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
+                self.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
+            }
+        }
+    }
+
+    pub fn compute_setup(&mut self, shader: EntryPoint) {
+        let pipeline =
+            ComputePipeline::new(self.device.clone(), shader, &(), None, |_| {}).expect("Failed to create pipeline");
+
+        let dimensions = self.swap_chain_images[0].dimensions().width_height();
+        // the framebuffer
+        let frame_image = AttachmentImage::with_usage(
+            self.device.clone(),
+            dimensions,
+            Format::R32G32B32A32_SFLOAT,
+            ImageUsage {
+                storage: true,
+                transfer_src: true,
+                ..ImageUsage::none()
+            },
+        )
+        .unwrap();
+
+        self.compute_pipeline = Some(ComputeBackend { pipeline, frame_image })
+    }
+
+    pub fn compute_submit(&mut self) {
+        //TODO: frames in flight
+
+        let pipeline = self
+            .compute_pipeline
+            .as_mut()
+            .expect("Streaming pipeline was not created");
+
+        let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
+
+        // It is important to call this function from time to time, otherwise resources will keep
+        // accumulating and you will eventually reach an out of memory error.
+        // Calling this function polls various fences in order to determine what the GPU has
+        // already processed, and frees the resources that are no longer needed.
+        self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+        // Before we can draw on the output, we have to *acquire* an image from the swapchain. If
+        // no image is available (which happens if you submit draw commands too quickly), then the
+        // function will block.
+        // This operation returns the index of the image that we are allowed to draw upon.
+        //
+        // This function can block if no image is available. The parameter is an optional timeout
+        // after which the function call will return an error.
+        let (image_num, _suboptimal, acquire_future) = match acquire_next_image(swap_chain.clone(), None) {
+            Ok(r) => r,
+            Err(AcquireError::OutOfDate) => {
+                return;
+            }
+            Err(e) => panic!("Failed to acquire next image: {:?}", e),
+        };
+
+        let layout = pipeline.pipeline.layout().set_layouts().get(0).unwrap();
+        let dimensions = self.swap_chain_images[0].dimensions().width_height();
+
+        let set = PersistentDescriptorSet::new(
+            layout.clone(),
+            [WriteDescriptorSet::image_view(
+                0,
+                ImageView::new_default(pipeline.frame_image.clone()).unwrap(), //TODO: store
+            )], // do this every draw
+        )
+        .unwrap();
+
+        let mut builder = AutoCommandBufferBuilder::primary(
+            self.device.clone(),
+            self.compute_queue.family(),
+            CommandBufferUsage::OneTimeSubmit,
+        )
+        .unwrap();
+
+        builder
+            .bind_pipeline_compute(pipeline.pipeline.clone())
+            .bind_descriptor_sets(
+                PipelineBindPoint::Compute,
+                pipeline.pipeline.layout().clone(),
+                0, // 0 is the index of our set
+                set,
+            )
+            .dispatch([
+                (dimensions[0] / COMPUTE_WORKGROUP_X) + 1,
+                (dimensions[1] / COMPUTE_WORKGROUP_Y) + 1,
+                1,
+            ])
+            .unwrap()
+            .blit_image(BlitImageInfo::images(
+                pipeline.frame_image.clone(),
+                self.swap_chain_images[image_num].clone(),
+            ))
+            .unwrap();
+
+        let command_buffer = builder.build().unwrap();
+
+        let future = self
+            .previous_frame_end
+            .take()
+            .unwrap()
+            .join(acquire_future)
+            .then_execute(self.compute_queue.clone(), command_buffer)
+            .unwrap()
+            // The color output is now expected to contain our triangle. But in order to show it on
+            // the screen, we have to *present* the image by calling `present`.
+            //
+            // This function does not actually present the image immediately. Instead it submits a
+            // present command at the end of the queue. This means that it will only be presented once
+            // the GPU has finished executing the command buffer that draws the triangle.
+            .then_swapchain_present(self.present_queue.clone(), swap_chain.clone(), image_num)
+            .then_signal_fence_and_flush();
+
+        match future {
+            Ok(future) => {
+                self.previous_frame_end = Some(future.boxed());
+            }
+            Err(FlushError::OutOfDate) => {
+                self.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
+            }
+            Err(e) => {
+                error!("Failed to flush future: {:?}", e);
+                self.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
             }
         }
     }
