@@ -11,6 +11,8 @@ layout(set = 0, binding = 0, rgba32f) uniform image2D img;
 #define EPSILON 0.00001
 #define UINT_MAX 4294967295
 
+const uint MAX_BOUNCES = 3;
+
 struct Ray {
     vec3 origin;
     vec3 direction;
@@ -21,10 +23,22 @@ struct Sphere {
     float radius;
 };
 
+struct Plane {
+    vec3 position;
+    vec3 normal;
+};
+
 struct HitInfo {
     vec3 position;
     vec3 normal;
 };
+
+const uint NUM_SPHERES = 2;
+Sphere spheres[NUM_SPHERES] = {Sphere(vec3(0.0, 0.0, 5.0), 1.0),
+                               Sphere(vec3(-2.5, 0.5, 6.0), 1.0)};
+
+const uint NUM_PLANES = 1;
+Plane planes[NUM_PLANES] = {Plane(vec3(0.0, -1.4, 0.0), vec3(0.0, 1.0, 0.0))};
 
 float ray_sphere_intersect(Ray ray, Sphere sphere) {
     // vector from sphere center to ray origin.
@@ -75,25 +89,59 @@ float ray_sphere_intersect(Ray ray, Sphere sphere) {
     return d0;
 }
 
-Sphere spheres[1] = {Sphere(vec3(0.0, 0.0, 5.0), 1.0)};
+float ray_plane_intersect(Ray ray, Plane plane) {
+    float denom = -dot(plane.normal, ray.direction);
+
+    if (denom > 1e-6) {
+        vec3 to_plane = plane.position - ray.origin;
+        float d = dot(to_plane, -plane.normal) / denom;
+
+        if (d >= 0.0) {
+            return d;
+        } else {
+            return FLT_MAX;
+        }
+
+    } else {
+        return FLT_MAX;
+    }
+}
 
 HitInfo cast_ray(Ray ray) {
     float least_dist = FLT_MAX;
-    uint hit_sphere = UINT_MAX;
+    uint hit_idx = UINT_MAX;
+    uint hit_obj = UINT_MAX;
 
-    for (int i = 0; i < 1; i++) {
+    for (int i = 0; i < NUM_SPHERES; i++) {
         float obj_dist = ray_sphere_intersect(ray, spheres[i]);
         if (obj_dist < least_dist) {
             least_dist = obj_dist;
-            hit_sphere = i;
+            hit_idx = i;
+            hit_obj = 0;  // TODO: replace with var
+        }
+    }
+
+    for (int i = 0; i < NUM_PLANES; i++) {
+        float obj_dist = ray_plane_intersect(ray, planes[i]);
+        if (obj_dist < least_dist) {
+            least_dist = obj_dist;
+            hit_idx = i;
+            hit_obj = 1;  // TODO: replace with var
         }
     }
 
     if (least_dist < FLT_MAX) {
         vec3 position = ray.origin + (least_dist * ray.direction);
-        vec3 normal = position - spheres[hit_sphere].position;
+        vec3 normal;
+
+        if (hit_obj == 0) {
+            normal = normalize(position - spheres[hit_idx].position);
+        } else if (hit_obj == 1) {
+            normal = planes[hit_idx].normal;
+        }
 
         return HitInfo(position, normal);
+
     } else {
         return HitInfo(vec3(FLT_MAX), vec3(FLT_MAX));
     }
@@ -101,7 +149,7 @@ HitInfo cast_ray(Ray ray) {
 
 float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
             float light_intensity) {
-    float shininess = 16.0;
+    float shininess = 32.0;
     float mat_diffuse = 1.0;
     float mat_specular = 0.5;
 
@@ -121,33 +169,96 @@ float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
     return light_intensity * (mat_diffuse * diffuse + mat_specular * specular);
 }
 
-vec3 shade_object(vec3 direction, HitInfo info) {
-    vec3 light_pos = vec3(0.0, 3.0, -3.0);
+vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
+    vec3 light_pos = vec3(0.0, 5.0, -3.0);
     float light_intensity = 3.5;
-    float ambient = 0.1;
-    vec3 obj_col = vec3(0.6, 0.2, 0.2);
+    float ambient = 0.2;
+    vec3 obj_col = vec3(0.8, 0.3, 0.2);
 
     vec3 vec_to_light = light_pos - info.position;
     vec3 position = info.position;
     vec3 normal = info.normal;
 
-    return obj_col *
-           (ambient + phong(normal, vec_to_light, direction, light_intensity));
+    Ray shadow_ray = Ray(position + (normal * EPSILON * 3.0), vec_to_light);
+    HitInfo shadow_info = cast_ray(shadow_ray);  // TODO: cheaper cast, less
+                                                 // info
+
+    float shade;
+    vec3 shadow_vec = shadow_info.position - position;
+
+    if (dot(shadow_vec, shadow_vec) > dot(vec_to_light, vec_to_light)) {
+        shade = 1.0;
+    } else {
+        shade = 0.0;
+    }
+
+    // The amount the object this way was reflected off modifies the colour
+    vec3 last_transmission = transmission;
+    transmission *=
+        /*clamp(fresnel+reflectivity,0.0,1.0)* */ obj_col;  // obj_colour
+
+    return last_transmission * obj_col *
+           (ambient +
+            shade * phong(normal, vec_to_light, direction, light_intensity));
 }
 
 vec3 render_pixel(vec2 uv) {
     float zdepth = 1.0;
     mat3 rot_mat = mat3(1.0);  // Identity matrix
+    vec3 camera_pos = vec3(0.0);
 
+    vec3 colour = vec3(0.0);
+    vec3 transmission = vec3(1.0);
+
+    vec3 ray_pos = camera_pos;
     vec3 dir = vec3(uv, zdepth) * rot_mat;
 
-    HitInfo hit = cast_ray(Ray(vec3(0.0, 0.0, 0.0), dir));
+    for (int i = 0; i < MAX_BOUNCES; i++) {
+        HitInfo hit = cast_ray(Ray(ray_pos, dir));
 
-    if (hit.normal.x < FLT_MAX) {
-        return shade_object(dir, hit);
-    } else {
-        return vec3(0.7);
+        if (hit.normal.x < FLT_MAX) {
+            colour += shade_object(dir, hit, transmission);
+
+            // if hit.mat.reflectivity > 1e-3
+            if (hit.position.x < 1.0 || hit.position.y < 0.0) {
+                dir = reflect(dir, hit.normal);
+                ray_pos =
+                    hit.position + (dir * EPSILON * 3.0);  // nudge position
+            } else {
+                break;
+            }
+
+        } else {
+            colour += transmission * vec3(0.7);
+            break;
+        }
     }
+    return colour;
+}
+
+vec3 aces_tonemap(vec3 color) {
+    mat3 m1 = mat3(0.59719, 0.07600, 0.02840, 0.35458, 0.90834, 0.13383,
+                   0.04823, 0.01566, 0.83777);
+    mat3 m2 = mat3(1.60475, -0.10208, -0.00327, -0.53108, 1.10813, -0.07276,
+                   -0.07367, -0.00605, 1.07602);
+    vec3 v = m1 * color;
+    vec3 a = v * (v + 0.0245786) - 0.000090537;
+    vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
+
+    // vec3 col = clamp(m2 * (a / b), 0.0, 1.0);
+    vec3 col = m2 * (a / b);
+
+    return col;
+    // return toSRGB(col);	// gamma corrected
+}
+
+vec3 ACESFilm(vec3 x) {
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return (x * (a * x + b)) / (x * (c * x + d) + e);
 }
 
 void main() {
@@ -160,7 +271,7 @@ void main() {
     vec2 uv = (gl_GlobalInvocationID.xy - (vec2(imageSize(img).xy / 2.0))) /
               vec2(imageSize(img).y);
     uv.y = -uv.y;
-    vec3 colour = render_pixel(uv);
+    vec3 colour = aces_tonemap(render_pixel(uv));
 
     imageStore(img, ivec2(gl_GlobalInvocationID.xy), vec4(colour, 0.0));
 }
