@@ -10,11 +10,12 @@ use winit::{
 };
 
 use crate::{
+    mat3,
     renderer::{CPURenderer, CameraComponent, TransformComponent},
     scene::Scene,
     vec3,
     vk::{BufferType, VkBackend, ELEM_PER_PIX},
-    Vec3, Vec4,
+    Mat4, Vec3, Vec4,
 };
 
 const NUM_KEYS: usize = variant_count::<VirtualKeyCode>();
@@ -155,7 +156,24 @@ impl Engine {
         //let now = std::time::Instant::now();
         self.backend.streaming_submit(buffer_pix);
         */
-        self.backend.compute_submit();
+
+        let render_scene = scene.query_scene_objects();
+
+        let camera = render_scene.camera;
+
+        let rot_mat = camera.camera.get_rot_mat();
+        let fov_deg: f32 = camera.camera.fov;
+
+        let camera_position = camera.transform.position.to_array();
+        let camera_zdepth = (fov_deg * 0.5).to_radians().tan().recip();
+        let camera_rotation = Mat4::from_mat3(rot_mat.transpose()).to_cols_array_2d();
+
+        self.backend.compute_submit(cs::ty::Constants {
+            camera_position,
+            camera_rotation,
+            camera_zdepth,
+        });
+
         //debug!("Submit time: {:.2?}", now.elapsed());
         //debug!("Frame time: {:.2?}", frame_start.elapsed());
     }
@@ -199,6 +217,11 @@ impl Engine {
             window.set_cursor_visible(false);
         }
 
+        let mut fov_add = 0.0;
+        if self.mouse_right {
+            fov_add = 1.0;
+        }
+
         for (_, (t, c)) in scene.query_mut::<(&mut TransformComponent, &mut CameraComponent)>() {
             if self.mouse_dx.abs() > 1.0 && self.mouse_captured {
                 c.yaw += self.mouse_dx * 0.002;
@@ -206,6 +229,7 @@ impl Engine {
             if self.mouse_dy.abs() > 1.0 && self.mouse_captured {
                 c.pitch += self.mouse_dy * 0.002;
             }
+            c.fov -= fov_add;
             t.position += c.get_rot_mat() * offset;
         }
 
@@ -240,6 +264,7 @@ impl Engine {
     }
 }
 
+//TODO: get backend to deal with this (at runtime?)
 #[allow(clippy::needless_question_mark)]
 mod vs {
     vulkano_shaders::shader! {

@@ -1,44 +1,85 @@
 #version 450
 
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-layout(set = 0, binding = 0, rgba32f) uniform image2D img;
-
 #define FLT_MAX 3.402823466e+38
 #define FLT_MIN 1.175494351e-38
 #define DBL_MAX 1.7976931348623158e+308
 #define DBL_MIN 2.2250738585072014e-308
-#define EPSILON 0.00001
+#define EPSILON 0.001
 #define UINT_MAX 4294967295
 
 const uint MAX_BOUNCES = 3;
 
+// Data Structures
 struct Ray {
     vec3 origin;
     vec3 direction;
 };
 
-struct Sphere {
-    vec3 position;
-    float radius;
-};
+struct Material {
+    vec3 colour;
 
-struct Plane {
-    vec3 position;
-    vec3 normal;
+    float ambient;
+    float diffuse;
+    float specular;
+    float shininess;
+    float reflectivity;
+    float emissive;
 };
 
 struct HitInfo {
     vec3 position;
     vec3 normal;
+    Material mat;
 };
 
+struct Sphere {
+    vec3 position;
+    float radius;
+    Material mat;
+};
+
+struct Plane {
+    vec3 position;
+    vec3 normal;
+    Material mat;
+};
+
+struct PointLight {
+    vec3 position;
+    float intensity;
+};
+
+struct Camera {
+    vec3 position;
+    mat3 rotation;
+    float zdepth;
+};
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform image2D img;
+
+layout(push_constant) uniform Constants {
+    vec3 camera_position;
+    float camera_zdepth;
+    mat4 camera_rotation;  // sending a mat3 through push constants is buggy
+}
+constants;
+
+const PointLight LIGHT = PointLight(vec3(0.0, 5.0, -3.0), 3.5);
+const Material TEST_MAT =
+    Material(vec3(0.8, 0.1, 0.1), 0.1, 1.0, 0.8, 32.0, 1.0, 0.0);
+
+const Material TEST_MAT2 =
+    Material(vec3(0.05, 0.9, 0.1), 0.2, 1.0, 0.2, 8.0, 0.1, 0.0);
+
 const uint NUM_SPHERES = 2;
-Sphere spheres[NUM_SPHERES] = {Sphere(vec3(0.0, 0.0, 5.0), 1.0),
-                               Sphere(vec3(-2.5, 0.5, 6.0), 1.0)};
+Sphere spheres[NUM_SPHERES] = {Sphere(vec3(0.0, 0.0, 5.0), 1.0, TEST_MAT),
+                               Sphere(vec3(-2.5, 0.5, 6.0), 1.0, TEST_MAT)};
 
 const uint NUM_PLANES = 1;
-Plane planes[NUM_PLANES] = {Plane(vec3(0.0, -1.4, 0.0), vec3(0.0, 1.0, 0.0))};
+Plane planes[NUM_PLANES] = {
+    Plane(vec3(0.0, -1.4, 0.0), vec3(0.0, 1.0, 0.0), TEST_MAT2)};
 
 float ray_sphere_intersect(Ray ray, Sphere sphere) {
     // vector from sphere center to ray origin.
@@ -133,26 +174,25 @@ HitInfo cast_ray(Ray ray) {
     if (least_dist < FLT_MAX) {
         vec3 position = ray.origin + (least_dist * ray.direction);
         vec3 normal;
+        Material mat;
 
         if (hit_obj == 0) {
             normal = normalize(position - spheres[hit_idx].position);
+            mat = spheres[hit_idx].mat;
         } else if (hit_obj == 1) {
             normal = planes[hit_idx].normal;
+            mat = planes[hit_idx].mat;
         }
 
-        return HitInfo(position, normal);
+        return HitInfo(position, normal, mat);
 
     } else {
-        return HitInfo(vec3(FLT_MAX), vec3(FLT_MAX));
+        return HitInfo(vec3(FLT_MAX), vec3(FLT_MAX), TEST_MAT);
     }
 }
 
 float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
-            float light_intensity) {
-    float shininess = 32.0;
-    float mat_diffuse = 1.0;
-    float mat_specular = 0.5;
-
+            float light_intensity, Material mat) {
     float dist_sqd = dot(vec_to_light, vec_to_light);
     float light_radiance = light_intensity / dist_sqd;
     vec3 vec_to_light_norm = vec_to_light / sqrt(dist_sqd);
@@ -164,26 +204,27 @@ float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
 
     if (diffuse > 0.0) {
         specular =
-            pow(max(dot(light_reflection, view_direction), 0.0), shininess);
+            pow(max(dot(light_reflection, view_direction), 0.0), mat.shininess);
     }
-    return light_intensity * (mat_diffuse * diffuse + mat_specular * specular);
+    return light_intensity * (mat.diffuse * diffuse + mat.specular * specular);
 }
 
 vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
-    vec3 light_pos = vec3(0.0, 5.0, -3.0);
-    float light_intensity = 3.5;
-    float ambient = 0.2;
-    vec3 obj_col = vec3(0.8, 0.3, 0.2);
+    vec3 light_pos = LIGHT.position;
+    float light_intensity = LIGHT.intensity;
+
+    Material mat = info.mat;
+    vec3 obj_col = mat.colour;
 
     vec3 vec_to_light = light_pos - info.position;
     vec3 position = info.position;
     vec3 normal = info.normal;
 
-    Ray shadow_ray = Ray(position + (normal * EPSILON * 3.0), vec_to_light);
+    Ray shadow_ray = Ray(position + (normal * EPSILON * 5.0), vec_to_light);
     HitInfo shadow_info = cast_ray(shadow_ray);  // TODO: cheaper cast, less
                                                  // info
 
-    float shade;
+    float shade;  // TODO: soft shadows
     vec3 shadow_vec = shadow_info.position - position;
 
     if (dot(shadow_vec, shadow_vec) > dot(vec_to_light, vec_to_light)) {
@@ -192,26 +233,33 @@ vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
         shade = 0.0;
     }
 
+    // Cheap fresnel
+    // TODO: make more physically correct
+    float fx = clamp(1.0 - dot(normal, -direction), 0.0, 1.0);
+    float fresnel = fx * fx * fx * fx * fx;
+
     // The amount the object this way was reflected off modifies the colour
     vec3 last_transmission = transmission;
-    transmission *=
-        /*clamp(fresnel+reflectivity,0.0,1.0)* */ obj_col;  // obj_colour
+    transmission *= clamp(fresnel + mat.reflectivity, 0.0, 1.0) * obj_col *
+                    max(shade, mat.ambient);  // obj_colour
 
     return last_transmission * obj_col *
-           (ambient +
-            shade * phong(normal, vec_to_light, direction, light_intensity));
+           (mat.ambient + shade * phong(normal, vec_to_light, direction,
+                                        light_intensity, mat));
 }
 
 vec3 render_pixel(vec2 uv) {
-    float zdepth = 1.0;
-    mat3 rot_mat = mat3(1.0);  // Identity matrix
-    vec3 camera_pos = vec3(0.0);
+    float zdepth = constants.camera_zdepth;
+    mat3 rot_mat = mat3(constants.camera_rotation);
+    vec3 camera_pos = constants.camera_position;
+
+    vec3 sky_colour = vec3(0.7);
 
     vec3 colour = vec3(0.0);
     vec3 transmission = vec3(1.0);
 
     vec3 ray_pos = camera_pos;
-    vec3 dir = vec3(uv, zdepth) * rot_mat;
+    vec3 dir = normalize(vec3(uv, zdepth) * rot_mat);
 
     for (int i = 0; i < MAX_BOUNCES; i++) {
         HitInfo hit = cast_ray(Ray(ray_pos, dir));
@@ -219,8 +267,7 @@ vec3 render_pixel(vec2 uv) {
         if (hit.normal.x < FLT_MAX) {
             colour += shade_object(dir, hit, transmission);
 
-            // if hit.mat.reflectivity > 1e-3
-            if (hit.position.x < 1.0 || hit.position.y < 0.0) {
+            if (hit.mat.reflectivity > 1e-3) {
                 dir = reflect(dir, hit.normal);
                 ray_pos =
                     hit.position + (dir * EPSILON * 3.0);  // nudge position
@@ -229,10 +276,11 @@ vec3 render_pixel(vec2 uv) {
             }
 
         } else {
-            colour += transmission * vec3(0.7);
+            colour += transmission * sky_colour;
             break;
         }
     }
+
     return colour;
 }
 

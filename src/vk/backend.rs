@@ -692,7 +692,7 @@ impl VkBackend {
         self.compute_pipeline = Some(ComputeBackend { pipeline, frame_image })
     }
 
-    pub fn compute_submit(&mut self) {
+    pub fn compute_submit<Pc>(&mut self, push_constants: Pc) {
         //TODO: frames in flight
 
         let pipeline = self
@@ -750,6 +750,7 @@ impl VkBackend {
                 0, // 0 is the index of our set
                 set,
             )
+            .push_constants(pipeline.pipeline.layout().clone(), 0, push_constants)
             .dispatch([
                 (dimensions[0] / COMPUTE_WORKGROUP_X) + 1,
                 (dimensions[1] / COMPUTE_WORKGROUP_Y) + 1,

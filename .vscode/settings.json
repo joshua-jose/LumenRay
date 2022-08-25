@@ -3,4 +3,14 @@
         "**/mod.rs": true
     },
     "rust-analyzer.checkOnSave.command": "clippy",
+    "emeraldwalk.runonsave": {
+        "commands": [
+            {
+                "match": ".*",
+                "isAsync": true,
+                "cmd": "cargo build",
+            },
+        ]
+    },
+    "glsllint.glslangValidatorArgs": "-V"
 }
