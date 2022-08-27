@@ -59,8 +59,13 @@ struct Camera {
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 layout(set = 0, binding = 0, rgba32f) writeonly uniform image2D img;
+
 layout(set = 0, binding = 1) readonly buffer SphereData { Sphere data[]; }
 spheres;
+layout(set = 0, binding = 2) readonly buffer PlaneData { Plane data[]; }
+planes;
+layout(set = 0, binding = 3) readonly buffer LightData { PointLight data[]; }
+lights;
 
 layout(push_constant) uniform Constants {
     vec3 camera_position;
@@ -69,21 +74,8 @@ layout(push_constant) uniform Constants {
 }
 constants;
 
-const PointLight LIGHT = PointLight(vec3(0.0, 5.0, -3.0), 3.5);
-const Material TEST_MAT =
-    Material(vec3(0.8, 0.1, 0.1), 0.1, 1.0, 0.8, 32.0, 1.0, 0.0);
-
-const Material TEST_MAT2 =
-    Material(vec3(0.05, 0.9, 0.1), 0.2, 1.0, 0.2, 8.0, 0.1, 0.0);
-
-/*
-const uint NUM_SPHERES = 2;
-Sphere spheres[NUM_SPHERES] = {Sphere(vec3(0.0, 0.0, 5.0), 1.0, TEST_MAT),
-                               Sphere(vec3(-2.5, 0.5, 6.0), 1.0, TEST_MAT)};
-*/
-const uint NUM_PLANES = 1;
-Plane planes[NUM_PLANES] = {
-    Plane(vec3(0.0, -1.4, 0.0), vec3(0.0, 1.0, 0.0), TEST_MAT2)};
+const Material NULL_MAT =
+    Material(vec3(0.0, 0.0, 0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 
 float ray_sphere_intersect(Ray ray, Sphere sphere) {
     // vector from sphere center to ray origin.
@@ -166,8 +158,8 @@ HitInfo cast_ray(Ray ray) {
         }
     }
 
-    for (int i = 0; i < NUM_PLANES; i++) {
-        float obj_dist = ray_plane_intersect(ray, planes[i]);
+    for (int i = 0; i < planes.data.length(); i++) {
+        float obj_dist = ray_plane_intersect(ray, planes.data[i]);
         if (obj_dist < least_dist) {
             least_dist = obj_dist;
             hit_idx = i;
@@ -185,7 +177,7 @@ HitInfo cast_ray(Ray ray) {
             normal = normalize(position - sphere.position);
             mat = sphere.mat;
         } else if (hit_obj == 1) {
-            Plane plane = planes[hit_idx];
+            Plane plane = planes.data[hit_idx];
             normal = plane.normal;
             mat = plane.mat;
         }
@@ -193,7 +185,7 @@ HitInfo cast_ray(Ray ray) {
         return HitInfo(position, normal, mat);
 
     } else {
-        return HitInfo(vec3(FLT_MAX), vec3(FLT_MAX), TEST_MAT);
+        return HitInfo(vec3(FLT_MAX), vec3(FLT_MAX), NULL_MAT);
     }
 }
 
@@ -216,8 +208,9 @@ float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
 }
 
 vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
-    vec3 light_pos = LIGHT.position;
-    float light_intensity = LIGHT.intensity;
+    PointLight light = lights.data[0];
+    vec3 light_pos = light.position;
+    float light_intensity = light.intensity;
 
     Material mat = info.mat;
     vec3 obj_col = mat.colour;

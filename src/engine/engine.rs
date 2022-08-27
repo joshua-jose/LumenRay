@@ -42,14 +42,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(width: u32, height: u32) -> Self {
         let event_loop = Some(EventLoop::new());
-        let mut backend = VkBackend::new(event_loop.as_ref().unwrap(), "LumenRay", width, height);
-
-        /*
-        let vs = vs::load(backend.device.clone()).unwrap();
-        let fs = fs::load(backend.device.clone()).unwrap();
-        backend.streaming_setup(vs.entry_point("main").unwrap(), fs.entry_point("main").unwrap());
-
-        */
+        let backend = VkBackend::new(event_loop.as_ref().unwrap(), "LumenRay", width, height);
 
         let window = backend.surface.window();
         window.set_cursor_grab(true).unwrap();
@@ -132,29 +125,6 @@ impl Engine {
 
     fn render(&mut self, scene: &mut Scene, metric_file: &mut File) {
         //let frame_start = std::time::Instant::now();
-
-        /*
-        self.renderer
-            .draw(&mut self.framebuffer, self.width as usize, self.height as usize, scene);
-        //debug!("Draw time: {:.2?}", frame_start.elapsed());
-
-        let draw_time = frame_start.elapsed();
-
-        let packet = draw_time.as_nanos().to_string() + "\n";
-        metric_file.write_all(packet.as_bytes()).unwrap();
-        //metric_file.write_all("\n".as_bytes()).unwrap();
-        // metric_stream.write_all(&packet).unwrap();
-
-        // reinterpet framebuffer as a slice of f32s
-        let buffer_pix = unsafe {
-            std::slice::from_raw_parts_mut(
-                self.framebuffer.as_mut_ptr() as *mut BufferType,
-                (self.width * self.height * ELEM_PER_PIX) as usize,
-            )
-        };
-        //let now = std::time::Instant::now();
-        self.backend.streaming_submit(buffer_pix);
-        */
 
         self.renderer.draw(scene);
 
