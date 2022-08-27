@@ -3,6 +3,7 @@
         "**/mod.rs": true
     },
     "rust-analyzer.checkOnSave.command": "clippy",
+    /*
     "emeraldwalk.runonsave": {
         "commands": [
             {
@@ -12,5 +13,6 @@
             },
         ]
     },
+    */
     "glsllint.glslangValidatorArgs": "-V"
 }

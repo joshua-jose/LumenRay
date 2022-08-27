@@ -55,9 +55,12 @@ struct Camera {
     float zdepth;
 };
 
+// Compute shader workgroup size
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(set = 0, binding = 0, rgba32f) uniform image2D img;
+layout(set = 0, binding = 0, rgba32f) writeonly uniform image2D img;
+layout(set = 0, binding = 1) readonly buffer SphereData { Sphere data[]; }
+spheres;
 
 layout(push_constant) uniform Constants {
     vec3 camera_position;
@@ -73,10 +76,11 @@ const Material TEST_MAT =
 const Material TEST_MAT2 =
     Material(vec3(0.05, 0.9, 0.1), 0.2, 1.0, 0.2, 8.0, 0.1, 0.0);
 
+/*
 const uint NUM_SPHERES = 2;
 Sphere spheres[NUM_SPHERES] = {Sphere(vec3(0.0, 0.0, 5.0), 1.0, TEST_MAT),
                                Sphere(vec3(-2.5, 0.5, 6.0), 1.0, TEST_MAT)};
-
+*/
 const uint NUM_PLANES = 1;
 Plane planes[NUM_PLANES] = {
     Plane(vec3(0.0, -1.4, 0.0), vec3(0.0, 1.0, 0.0), TEST_MAT2)};
@@ -153,8 +157,8 @@ HitInfo cast_ray(Ray ray) {
     uint hit_idx = UINT_MAX;
     uint hit_obj = UINT_MAX;
 
-    for (int i = 0; i < NUM_SPHERES; i++) {
-        float obj_dist = ray_sphere_intersect(ray, spheres[i]);
+    for (int i = 0; i < spheres.data.length(); i++) {
+        float obj_dist = ray_sphere_intersect(ray, spheres.data[i]);
         if (obj_dist < least_dist) {
             least_dist = obj_dist;
             hit_idx = i;
@@ -177,11 +181,13 @@ HitInfo cast_ray(Ray ray) {
         Material mat;
 
         if (hit_obj == 0) {
-            normal = normalize(position - spheres[hit_idx].position);
-            mat = spheres[hit_idx].mat;
+            Sphere sphere = spheres.data[hit_idx];
+            normal = normalize(position - sphere.position);
+            mat = sphere.mat;
         } else if (hit_obj == 1) {
-            normal = planes[hit_idx].normal;
-            mat = planes[hit_idx].mat;
+            Plane plane = planes[hit_idx];
+            normal = plane.normal;
+            mat = plane.mat;
         }
 
         return HitInfo(position, normal, mat);
@@ -240,8 +246,8 @@ vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
 
     // The amount the object this way was reflected off modifies the colour
     vec3 last_transmission = transmission;
-    transmission *= clamp(fresnel + mat.reflectivity, 0.0, 1.0) * obj_col *
-                    max(shade, mat.ambient);  // obj_colour
+    transmission *=
+        clamp(fresnel + mat.reflectivity, 0.0, 1.0) * obj_col;  // obj_colour
 
     return last_transmission * obj_col *
            (mat.ambient + shade * phong(normal, vec_to_light, direction,

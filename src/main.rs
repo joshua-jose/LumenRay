@@ -15,12 +15,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 const WIDTH: u32 = 800;
 const HEIGHT: u32 = 600;
 
-// TODO: move all this to engine class
-
 // TODO: write tests and add codecov
 // TODO: add bench with default scene
-
-// TODO: audit game loop for unnecessary performance hits
 
 fn main() {
     let mut log_builder = env_logger::Builder::new();

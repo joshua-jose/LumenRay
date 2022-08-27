@@ -1,11 +1,7 @@
 use std::sync::Arc;
 
 use vulkano::{
-    buffer::{BufferUsage, CpuAccessibleBuffer},
-    command_buffer::{
-        AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, CopyBufferToImageInfo, RenderingAttachmentInfo,
-        RenderingInfo,
-    },
+    command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage},
     descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::{
         physical::{PhysicalDevice, PhysicalDeviceType},
@@ -20,15 +16,7 @@ use vulkano::{
         },
         Instance, InstanceCreateInfo, InstanceExtensions,
     },
-    pipeline::{
-        graphics::{
-            render_pass::PipelineRenderingCreateInfo,
-            viewport::{Viewport, ViewportState},
-        },
-        ComputePipeline, GraphicsPipeline, Pipeline, PipelineBindPoint,
-    },
-    render_pass::{LoadOp, StoreOp},
-    sampler::{Sampler, SamplerCreateInfo},
+    pipeline::{ComputePipeline, Pipeline, PipelineBindPoint},
     shader::EntryPoint,
     swapchain::{
         acquire_next_image, AcquireError, ColorSpace, PresentMode, Surface, SurfaceCapabilities, SurfaceInfo,
@@ -44,7 +32,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use super::{BufferType, ComputeBackend, StreamingBackend, ELEM_PER_PIX};
+use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, HasDescriptor};
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
 #[cfg(debug_assertions)]
@@ -54,26 +42,31 @@ const ENABLE_VALIDATION_LAYERS: bool = false;
 
 const VALIDATION_LAYERS: &[&str] = &["VK_LAYER_KHRONOS_validation"];
 
+//TODO: change
 const COMPUTE_WORKGROUP_X: u32 = 8;
 const COMPUTE_WORKGROUP_Y: u32 = 8;
+
+pub const FRAMES_IN_FLIGHT: usize = 1;
 
 pub struct VkBackend {
     pub instance:              Arc<Instance>,
     pub device:                Arc<Device>,
     pub physical_device_index: usize,
     pub debug_callback:        Option<DebugUtilsMessenger>,
-    pub queues:                Vec<Arc<Queue>>,
     pub surface:               Arc<Surface<Window>>,
-    pub graphics_queue:        Arc<Queue>,
-    pub present_queue:         Arc<Queue>,
-    pub compute_queue:         Arc<Queue>,
-    pub swap_chain:            Option<Arc<Swapchain<Window>>>,
-    pub swap_chain_images:     Vec<Arc<SwapchainImage<Window>>>,
-    pub attachment_views:      Vec<Arc<ImageView<SwapchainImage<Window>>>>,
-    pub previous_frame_end:    Option<Box<dyn GpuFuture>>,
 
-    pub streaming_pipeline: Option<StreamingBackend>,
-    pub compute_pipeline:   Option<ComputeBackend>,
+    pub queues:         Vec<Arc<Queue>>,
+    pub graphics_queue: Arc<Queue>,
+    pub present_queue:  Arc<Queue>,
+    pub compute_queue:  Arc<Queue>,
+
+    pub swap_chain:        Option<Arc<Swapchain<Window>>>,
+    pub swap_chain_images: Vec<Arc<SwapchainImage<Window>>>,
+    pub attachment_views:  Vec<Arc<ImageView<SwapchainImage<Window>>>>,
+
+    pub compute_context: Option<ComputeContext>,
+
+    frame_number: usize,
 }
 
 impl VkBackend {
@@ -91,9 +84,6 @@ impl VkBackend {
         let (device, queues) = Self::create_device(&instance, physical_device_index, device_extensions);
         let (graphics_queue, present_queue, compute_queue) = Self::get_queues(&queues, &surface);
 
-        // help with syncing
-        let previous_frame_end = Some(now(device.clone()).boxed());
-
         let mut this = Self {
             instance,
             device,
@@ -108,10 +98,9 @@ impl VkBackend {
             swap_chain: None,
             swap_chain_images: vec![],
             attachment_views: vec![],
-            previous_frame_end,
 
-            streaming_pipeline: None,
-            compute_pipeline: None,
+            compute_context: None,
+            frame_number: 0,
         };
         this.create_swap_chain(width, height);
         this
@@ -443,270 +432,56 @@ impl VkBackend {
             .collect::<Vec<_>>();
     }
 
-    pub fn streaming_setup(&mut self, vert_s: EntryPoint, frag_s: EntryPoint) {
-        let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
-
-        // dimensions of our viewport
-        let dimensions = self.swap_chain_images[0].dimensions().width_height();
-        let viewport = Viewport {
-            origin:      [0.0, 0.0],
-            dimensions:  [dimensions[0] as f32, dimensions[1] as f32],
-            depth_range: 0.0..1.0,
-        };
-
-        // Set up our graphics pipeline
-        let pipeline = GraphicsPipeline::start()
-            .render_pass(PipelineRenderingCreateInfo {
-                // We specify a single color attachment that will be rendered to. When we begin
-                // rendering, we will specify a swapchain image to be used as this attachment, so here
-                // we set its format to be the same format as the swapchain.
-                color_attachment_formats: vec![Some(swap_chain.image_format())],
-                ..Default::default()
-            })
-            // A Vulkan shader can in theory contain multiple entry points, so we have to specify
-            // which one.
-            .vertex_shader(vert_s, ())
-            // Use a resizable viewport set to draw over the entire window
-            .viewport_state(ViewportState::viewport_fixed_scissor_irrelevant([viewport.clone()]))
-            // See `vertex_shader`.
-            .fragment_shader(frag_s, ())
-            // Now that our builder is filled, we call `build()` to obtain an actual pipeline.
-            .build(self.device.clone())
-            .unwrap();
-
-        // We write to this buffer from the CPU side, where each frame will be uploaded to the GPU
-        let frame_staging_buffer = unsafe {
-            CpuAccessibleBuffer::uninitialized_array(
-                self.device.clone(),
-                (dimensions[0] * dimensions[1] * ELEM_PER_PIX) as u64,
-                BufferUsage {
-                    transfer_src: true,
-                    ..BufferUsage::none()
-                },
-                false,
-            )
-            .unwrap()
-        };
-
-        // the destination image that will be sampled
-        let frame_image = AttachmentImage::with_usage(
-            self.device.clone(),
-            dimensions,
-            Format::R32G32B32A32_SFLOAT,
-            ImageUsage {
-                transfer_dst: true,
-                sampled: true,
-                ..ImageUsage::none()
-            },
-        )
-        .unwrap();
-
-        // setup the image we will write to from the CPU
-        let layout = pipeline.layout().set_layouts().get(0).unwrap();
-        let sampler = Sampler::new(self.device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap()).unwrap();
-        let image_view = ImageView::new_default(frame_image.clone()).unwrap();
-        let set = PersistentDescriptorSet::new(
-            layout.clone(),
-            [WriteDescriptorSet::image_view_sampler(0, image_view, sampler)],
-        )
-        .unwrap();
-
-        self.streaming_pipeline = Some(StreamingBackend {
-            pipeline,
-            viewport,
-            frame_staging_buffer,
-            frame_image,
-            set,
-        });
-    }
-
-    pub fn streaming_submit(&mut self, framebuffer: &[BufferType]) {
-        //! This function sends a framebuffer off to the GPU
-        //! It starts by writing to the staging buffer, then acquiring the swapchain image to write to
-        //! It then creates a command buffer, which will copy from the transfer buffer
-        //! to the GPU side framebuffer image,then sets up a render pass to blit that to the
-        //! swapchain, after going through a few shaders.
-
-        let pipeline = self
-            .streaming_pipeline
-            .as_mut()
-            .expect("Streaming pipeline was not created");
-
-        // It is important to call this function from time to time, otherwise resources will keep
-        // accumulating and you will eventually reach an out of memory error.
-        // Calling this function polls various fences in order to determine what the GPU has
-        // already processed, and frees the resources that are no longer needed.
-        self.previous_frame_end.as_mut().unwrap().cleanup_finished();
-
-        // get the swapchain
-        let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
-
-        {
-            match pipeline.frame_staging_buffer.write() {
-                Ok(mut writer) => writer.copy_from_slice(framebuffer),
-                Err(e) => {
-                    // if the frame rate is super high, we could be trying to write to this buffer *while* the previous frame is still copying
-                    // from the buffer to the image! In this case just log it and skip over
-                    trace!("Frame staging buffer write error: {}", e);
-                }
-            }
-        }
-
-        // Before we can draw on the output, we have to *acquire* an image from the swapchain. If
-        // no image is available (which happens if you submit draw commands too quickly), then the
-        // function will block.
-        // This operation returns the index of the image that we are allowed to draw upon.
-        //
-        // This function can block if no image is available. The parameter is an optional timeout
-        // after which the function call will return an error.
-        let (image_num, _suboptimal, acquire_future) = match acquire_next_image(swap_chain.clone(), None) {
-            Ok(r) => r,
-            Err(AcquireError::OutOfDate) => {
-                return;
-            }
-            Err(e) => panic!("Failed to acquire next image: {:?}", e),
-        };
-
-        // In order to draw, we have to build a *command buffer*. The command buffer object holds
-        // the list of commands that are going to be executed.
-        //
-        // Building a command buffer is an expensive operation (usually a few hundred
-        // microseconds), but it is known to be a hot path in the driver and is expected to be
-        // optimized.
-        //
-        // Note that we have to pass a queue family when we create the command buffer. The command
-        // buffer will only be executable on that given queue family.
-        //TODO: make this multiple submit? cache command buffer
-        let mut builder = AutoCommandBufferBuilder::primary(
-            self.device.clone(),
-            self.graphics_queue.family(),
-            CommandBufferUsage::OneTimeSubmit,
-        )
-        .unwrap();
-
-        builder
-            .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
-                pipeline.frame_staging_buffer.clone(),
-                pipeline.frame_image.clone(),
-            ))
-            .unwrap();
-
-        builder
-            // Before we can draw, we have to *enter a render pass*. We specify which
-            // attachments we are going to use for rendering here, which needs to match
-            // what was previously specified when creating the pipeline.
-            .begin_rendering(RenderingInfo {
-                // As before, we specify one color attachment, but now we specify
-                // the image view to use as well as how it should be used.
-                color_attachments: vec![Some(RenderingAttachmentInfo {
-                    // `Clear` means that we ask the GPU to clear the content of this
-                    // attachment at the start of rendering.
-                    load_op: LoadOp::Clear,
-                    // `Store` means that we ask the GPU to store the rendered output
-                    // in the attachment image. We could also ask it to discard the result.
-                    store_op: StoreOp::Store,
-                    // The value to clear the attachment with. Here we clear it with a
-                    // blue color.
-                    //
-                    // Only attachments that have `LoadOp::Clear` are provided with
-                    // clear values, any others should use `None` as the clear value.
-                    clear_value: Some([0.0, 0.0, 0.0, 1.0].into()),
-                    ..RenderingAttachmentInfo::image_view(
-                        // We specify image view corresponding to the currently acquired
-                        // swapchain image, to use for this attachment.
-                        self.attachment_views[image_num].clone(),
-                    )
-                })],
-                ..Default::default()
-            })
-            .unwrap()
-            // We are now inside the first subpass of the render pass. We add a draw command.
-            //
-            // The last two parameters contain the list of resources to pass to the shaders.
-            // Since we used an `EmptyPipeline` object, the objects have to be `()`.
-            .set_viewport(0, [pipeline.viewport.clone()])
-            .bind_pipeline_graphics(pipeline.pipeline.clone())
-            .bind_descriptor_sets(
-                PipelineBindPoint::Graphics,
-                pipeline.pipeline.layout().clone(),
-                0,
-                pipeline.set.clone(),
-            )
-            .draw(6, 1, 0, 0)
-            .unwrap()
-            // We leave the render pass.
-            .end_rendering()
-            .unwrap();
-
-        // Finish building the command buffer by calling `build`.
-        let command_buffer = builder.build().unwrap();
-
-        let future = self
-            .previous_frame_end
-            .take()
-            .unwrap()
-            .join(acquire_future)
-            .then_execute(self.graphics_queue.clone(), command_buffer)
-            .unwrap()
-            // The color output is now expected to contain our triangle. But in order to show it on
-            // the screen, we have to *present* the image by calling `present`.
-            //
-            // This function does not actually present the image immediately. Instead it submits a
-            // present command at the end of the queue. This means that it will only be presented once
-            // the GPU has finished executing the command buffer that draws the triangle.
-            .then_swapchain_present(self.present_queue.clone(), swap_chain.clone(), image_num)
-            .then_signal_fence_and_flush();
-
-        match future {
-            Ok(future) => {
-                self.previous_frame_end = Some(future.boxed());
-            }
-            Err(FlushError::OutOfDate) => {
-                self.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
-            }
-            Err(e) => {
-                error!("Failed to flush future: {:?}", e);
-                self.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
-            }
-        }
-    }
-
     pub fn compute_setup(&mut self, shader: EntryPoint) {
         let pipeline =
             ComputePipeline::new(self.device.clone(), shader, &(), None, |_| {}).expect("Failed to create pipeline");
 
         let dimensions = self.swap_chain_images[0].dimensions().width_height();
-        // the framebuffer
-        let frame_image = AttachmentImage::with_usage(
-            self.device.clone(),
-            dimensions,
-            Format::R32G32B32A32_SFLOAT,
-            ImageUsage {
-                storage: true,
-                transfer_src: true,
-                ..ImageUsage::none()
-            },
-        )
-        .unwrap();
 
-        self.compute_pipeline = Some(ComputeBackend { pipeline, frame_image })
+        // The Frame Data for each frame in flight
+        let create_frame_data = |_| -> ComputeFrameData {
+            // the framebuffer
+            let frame_image = AttachmentImage::with_usage(
+                self.device.clone(),
+                dimensions,
+                Format::R32G32B32A32_SFLOAT,
+                ImageUsage {
+                    storage: true,
+                    transfer_src: true,
+                    ..ImageUsage::none()
+                },
+            )
+            .unwrap();
+
+            let previous_frame_end = Some(now(self.device.clone()).boxed());
+
+            ComputeFrameData {
+                frame_image,
+                previous_frame_end,
+            }
+        };
+
+        let frame_data: [ComputeFrameData; FRAMES_IN_FLIGHT] = std::array::from_fn(create_frame_data);
+
+        self.compute_context = Some(ComputeContext { pipeline, frame_data })
     }
 
-    pub fn compute_submit<Pc>(&mut self, push_constants: Pc) {
+    pub fn gen_buffer<T: BufferType>(&self, len: u64) -> Buffer<T> {
+        Buffer::new(self.device.clone(), FRAMES_IN_FLIGHT + 1, len)
+    }
+
+    pub fn compute_submit<Pc>(&mut self, push_constants: Pc, buffers: &[&dyn HasDescriptor]) {
         //TODO: frames in flight
 
-        let pipeline = self
-            .compute_pipeline
-            .as_mut()
-            .expect("Streaming pipeline was not created");
-
+        let context = self.compute_context.as_mut().expect("Compute pipeline was not created");
         let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
+        let frame = &mut context.frame_data[self.frame_number];
 
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
         // Calling this function polls various fences in order to determine what the GPU has
         // already processed, and frees the resources that are no longer needed.
-        self.previous_frame_end.as_mut().unwrap().cleanup_finished();
+        frame.previous_frame_end.as_mut().unwrap().cleanup_finished();
 
         // Before we can draw on the output, we have to *acquire* an image from the swapchain. If
         // no image is available (which happens if you submit draw commands too quickly), then the
@@ -723,18 +498,24 @@ impl VkBackend {
             Err(e) => panic!("Failed to acquire next image: {:?}", e),
         };
 
-        let layout = pipeline.pipeline.layout().set_layouts().get(0).unwrap();
         let dimensions = self.swap_chain_images[0].dimensions().width_height();
 
-        let set = PersistentDescriptorSet::new(
-            layout.clone(),
-            [WriteDescriptorSet::image_view(
-                0,
-                ImageView::new_default(pipeline.frame_image.clone()).unwrap(), //TODO: store
-            )], // do this every draw
-        )
-        .unwrap();
+        let mut descriptors = vec![WriteDescriptorSet::image_view(
+            0,
+            ImageView::new_default(frame.frame_image.clone()).unwrap(),
+        )];
 
+        descriptors.reserve(buffers.len());
+        let mut binding = descriptors.len() as u32;
+        for b in buffers {
+            descriptors.push(b.get_descriptor(binding, self.frame_number));
+            binding += 1;
+        }
+        let layout = context.pipeline.layout().set_layouts().get(0).unwrap();
+        //TODO: Make this a descriptor pool
+        let set = PersistentDescriptorSet::new(layout.clone(), descriptors).unwrap();
+
+        //TODO: make this multiple submit? cache command buffer
         let mut builder = AutoCommandBufferBuilder::primary(
             self.device.clone(),
             self.compute_queue.family(),
@@ -743,14 +524,14 @@ impl VkBackend {
         .unwrap();
 
         builder
-            .bind_pipeline_compute(pipeline.pipeline.clone())
+            .bind_pipeline_compute(context.pipeline.clone())
             .bind_descriptor_sets(
                 PipelineBindPoint::Compute,
-                pipeline.pipeline.layout().clone(),
+                context.pipeline.layout().clone(),
                 0, // 0 is the index of our set
                 set,
             )
-            .push_constants(pipeline.pipeline.layout().clone(), 0, push_constants)
+            .push_constants(context.pipeline.layout().clone(), 0, push_constants)
             .dispatch([
                 (dimensions[0] / COMPUTE_WORKGROUP_X) + 1,
                 (dimensions[1] / COMPUTE_WORKGROUP_Y) + 1,
@@ -758,40 +539,40 @@ impl VkBackend {
             ])
             .unwrap()
             .blit_image(BlitImageInfo::images(
-                pipeline.frame_image.clone(),
+                frame.frame_image.clone(),
                 self.swap_chain_images[image_num].clone(),
             ))
             .unwrap();
 
         let command_buffer = builder.build().unwrap();
 
-        let future = self
+        let future = frame
             .previous_frame_end
             .take()
             .unwrap()
             .join(acquire_future)
             .then_execute(self.compute_queue.clone(), command_buffer)
             .unwrap()
-            // The color output is now expected to contain our triangle. But in order to show it on
-            // the screen, we have to *present* the image by calling `present`.
-            //
             // This function does not actually present the image immediately. Instead it submits a
             // present command at the end of the queue. This means that it will only be presented once
-            // the GPU has finished executing the command buffer that draws the triangle.
+            // the GPU has finished executing the command buffer that draws.
             .then_swapchain_present(self.present_queue.clone(), swap_chain.clone(), image_num)
             .then_signal_fence_and_flush();
 
         match future {
             Ok(future) => {
-                self.previous_frame_end = Some(future.boxed());
+                frame.previous_frame_end = Some(future.boxed());
             }
             Err(FlushError::OutOfDate) => {
-                self.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
+                frame.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
             }
             Err(e) => {
                 error!("Failed to flush future: {:?}", e);
-                self.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
+                frame.previous_frame_end = Some(vulkano::sync::now(self.device.clone()).boxed());
             }
         }
+
+        self.frame_number += 1;
+        self.frame_number %= FRAMES_IN_FLIGHT;
     }
 }

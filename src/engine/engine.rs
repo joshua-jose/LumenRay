@@ -1,7 +1,9 @@
-use std::fs::File;
 use std::intrinsics::variant_count;
 use std::io::prelude::*;
+use std::sync::Arc;
+use std::{cell::RefCell, fs::File};
 
+use log::debug;
 use winit::{
     event::{
         DeviceEvent, ElementState, Event, KeyboardInput, ModifiersState, MouseButton, VirtualKeyCode, WindowEvent,
@@ -10,12 +12,11 @@ use winit::{
 };
 
 use crate::{
-    mat3,
-    renderer::{CPURenderer, CameraComponent, TransformComponent},
+    renderer::{CameraComponent, GPURenderer, TransformComponent},
     scene::Scene,
     vec3,
-    vk::{BufferType, VkBackend, ELEM_PER_PIX},
-    Mat4, Vec3, Vec4,
+    vk::VkBackend,
+    Vec3,
 };
 
 const NUM_KEYS: usize = variant_count::<VirtualKeyCode>();
@@ -23,12 +24,11 @@ const NUM_KEYS: usize = variant_count::<VirtualKeyCode>();
 
 //TODO: rename this
 pub struct Engine {
-    event_loop:  Option<EventLoop<()>>,
-    backend:     VkBackend,
-    renderer:    CPURenderer,
-    framebuffer: Vec<Vec4>,
-    width:       u32,
-    height:      u32,
+    event_loop: Option<EventLoop<()>>,
+    backend:    Arc<RefCell<VkBackend>>,
+    renderer:   GPURenderer,
+    width:      u32,
+    height:     u32,
 
     keymap:         [bool; NUM_KEYS],
     modifiers:      ModifiersState,
@@ -49,24 +49,19 @@ impl Engine {
         let fs = fs::load(backend.device.clone()).unwrap();
         backend.streaming_setup(vs.entry_point("main").unwrap(), fs.entry_point("main").unwrap());
 
-        // CPU local frame buffer
-
         */
-        let framebuffer: Vec<Vec4> = vec![Vec4::splat(0.0); (width * height) as usize];
-        let cs = cs::load(backend.device.clone()).unwrap();
-        backend.compute_setup(cs.entry_point("main").unwrap());
-
-        let renderer = CPURenderer::new();
 
         let window = backend.surface.window();
         window.set_cursor_grab(true).unwrap();
         window.set_cursor_visible(false);
 
+        let backend = Arc::new(RefCell::new(backend));
+        let renderer = GPURenderer::new(backend.clone());
+
         Self {
             event_loop,
             backend,
             renderer,
-            framebuffer,
             width,
             height,
 
@@ -81,9 +76,13 @@ impl Engine {
     }
 
     pub fn get_texture_by_path(&mut self, path: &str, uscale: f32, vscale: f32) -> u32 {
-        self.renderer.get_texture_by_path(path, uscale, vscale)
+        //self.renderer.get_texture_by_path(path, uscale, vscale)
+        0
     }
-    pub fn get_texture_by_colour(&mut self, colour: Vec3) -> u32 { self.renderer.get_texture_by_colour(colour) }
+    pub fn get_texture_by_colour(&mut self, colour: Vec3) -> u32 {
+        //self.renderer.get_texture_by_colour(colour)
+        0
+    }
 
     pub fn run(mut self, mut scene: Scene) {
         let mut metric_file = File::create("metrics.csv").unwrap();
@@ -132,7 +131,7 @@ impl Engine {
     }
 
     fn render(&mut self, scene: &mut Scene, metric_file: &mut File) {
-        let frame_start = std::time::Instant::now();
+        //let frame_start = std::time::Instant::now();
 
         /*
         self.renderer
@@ -157,22 +156,7 @@ impl Engine {
         self.backend.streaming_submit(buffer_pix);
         */
 
-        let render_scene = scene.query_scene_objects();
-
-        let camera = render_scene.camera;
-
-        let rot_mat = camera.camera.get_rot_mat();
-        let fov_deg: f32 = camera.camera.fov;
-
-        let camera_position = camera.transform.position.to_array();
-        let camera_zdepth = (fov_deg * 0.5).to_radians().tan().recip();
-        let camera_rotation = Mat4::from_mat3(rot_mat.transpose()).to_cols_array_2d();
-
-        self.backend.compute_submit(cs::ty::Constants {
-            camera_position,
-            camera_rotation,
-            camera_zdepth,
-        });
+        self.renderer.draw(scene);
 
         //debug!("Submit time: {:.2?}", now.elapsed());
         //debug!("Frame time: {:.2?}", frame_start.elapsed());
@@ -190,6 +174,7 @@ impl Engine {
 
         let mut offset = vec3(0.0, 0.0, 0.0);
         let delta: f32 = if self.modifiers.shift() { 0.2 } else { 0.1 };
+        let backend = self.backend.borrow();
 
         if self.keymap[VirtualKeyCode::W as usize] {
             offset.z += delta;
@@ -205,14 +190,15 @@ impl Engine {
         }
         if self.keymap[VirtualKeyCode::Escape as usize] && self.mouse_captured {
             self.mouse_captured = false;
-            let window = self.backend.surface.window();
+            let window = backend.surface.window();
             window.set_cursor_grab(false).unwrap();
             window.set_cursor_visible(true);
         }
 
         if self.mouse_left && !self.mouse_captured {
             self.mouse_captured = true;
-            let window = self.backend.surface.window();
+
+            let window = backend.surface.window();
             window.set_cursor_grab(true).unwrap();
             window.set_cursor_visible(false);
         }
@@ -278,13 +264,5 @@ mod fs {
     vulkano_shaders::shader! {
         ty: "fragment",
         path:"shaders/cpu_render.frag"
-    }
-}
-
-#[allow(clippy::needless_question_mark)]
-mod cs {
-    vulkano_shaders::shader! {
-        ty: "compute",
-        path:"shaders/gpu_render.comp"
     }
 }
