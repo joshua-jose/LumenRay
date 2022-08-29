@@ -441,7 +441,7 @@ impl VkBackend {
         let pipeline = ComputePipeline::new(self.device.clone(), shader, &(), None, |layout| {
             let binding = layout[1].bindings.get_mut(&1).unwrap();
             binding.variable_descriptor_count = true;
-            binding.descriptor_count = 8;
+            binding.descriptor_count = 8; //TODO: Variable
         })
         .expect("Failed to create pipeline");
 
@@ -535,6 +535,7 @@ impl VkBackend {
         let tex_layout = context.pipeline.layout().set_layouts().get(1).unwrap();
 
         //TODO: Make this a descriptor pool
+        //TODO: allow setup of variable descriptor sets and calculate length
         let buf_set = PersistentDescriptorSet::new(buf_layout.clone(), buffer_descriptors).unwrap();
         let tex_set = PersistentDescriptorSet::new_variable(tex_layout.clone(), 7, texture_descriptors).unwrap();
 

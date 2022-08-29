@@ -13,7 +13,7 @@ use crate::{
     Mat4, Vec3,
 };
 
-use cs::ty::{Material, Plane, PointLight, Sphere};
+use cs::ty::{Plane, PointLight, Sphere};
 use log::debug;
 
 use super::{
@@ -56,12 +56,12 @@ impl GPURenderer {
         renderer
     }
 
-    pub fn get_texture_by_path(&mut self, path: &str, uscale: f32, vscale: f32) -> u32 {
+    pub fn get_texture_by_path(&mut self, path: &str) -> u32 {
         if let Some(idx) = self.texture_paths.iter().position(|x| x == path) {
             idx as u32
         } else {
             debug!("Loading texture from path \"{}\"", path);
-            let tex = Texture::from_path(path, uscale, vscale);
+            let tex = Texture::from_path(path);
             self.albedo_array.push_texture(tex.width, tex.height, tex.data);
 
             self.texture_paths.push(path.to_owned());
@@ -107,15 +107,7 @@ impl GPURenderer {
             .map(|(_, (t, s, m))| Sphere {
                 position: t.position.to_array(),
                 radius: s.radius,
-                mat: Material {
-                    tex_id:       m.tex_id,
-                    ambient:      m.ambient,
-                    diffuse:      m.diffuse,
-                    specular:     m.specular,
-                    shininess:    m.shininess,
-                    reflectivity: m.reflectivity,
-                    emissive:     m.emissive,
-                },
+                mat: m.into(),
                 ..Default::default()
             })
             .collect::<Vec<_>>();
@@ -127,15 +119,7 @@ impl GPURenderer {
                 position: t.position.to_array(),
                 normal: p.normal.to_array(),
                 tangent: p.tangent.to_array(),
-                mat: Material {
-                    tex_id:       m.tex_id,
-                    ambient:      m.ambient,
-                    diffuse:      m.diffuse,
-                    specular:     m.specular,
-                    shininess:    m.shininess,
-                    reflectivity: m.reflectivity,
-                    emissive:     m.emissive,
-                },
+                mat: m.into(),
                 ..Default::default()
             })
             .collect::<Vec<_>>();
@@ -165,14 +149,29 @@ impl GPURenderer {
     }
 }
 
+impl From<&MaterialComponent> for cs::ty::Material {
+    fn from(m: &MaterialComponent) -> Self {
+        Self {
+            tex_id: m.tex_id,
+            tex_scale: m.tex_scale.to_array(),
+            ambient: m.ambient,
+            diffuse: m.diffuse,
+            specular: m.specular,
+            shininess: m.shininess,
+            reflectivity: m.reflectivity,
+            emissive: m.emissive,
+
+            ..Default::default()
+        }
+    }
+}
+
 #[allow(clippy::needless_question_mark)]
 mod cs {
 
     vulkano_shaders::shader! {
         ty: "compute",
         path:"shaders/gpu_render.comp",
-        vulkan_version: "1.2",
-        spirv_version: "1.5",
         types_meta: {use bytemuck::{Pod, Zeroable}; #[derive(Copy,Clone,Pod, Zeroable, Default)] impl crate::vk::BufferType},
     }
 }

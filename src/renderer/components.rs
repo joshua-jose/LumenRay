@@ -1,6 +1,6 @@
 // put in SphereRender, PlaneRender, BoxRender, MeshRender etc. components here...
 
-use crate::{vec3, Mat3, Vec3};
+use crate::{vec2, vec3, Mat3, Vec2, Vec3};
 
 pub struct TransformComponent {
     pub position: Vec3,
@@ -49,7 +49,9 @@ impl PlaneRenderComponent {
 }
 
 pub struct MaterialComponent {
-    pub tex_id:       u32,
+    pub tex_id:    u32,
+    pub tex_scale: Vec2,
+
     pub ambient:      f32,
     pub diffuse:      f32, // aka albedo
     pub specular:     f32,
@@ -62,7 +64,9 @@ pub struct MaterialComponent {
 impl MaterialComponent {
     pub const fn basic() -> Self {
         Self {
-            tex_id:       0,
+            tex_id:    0,
+            tex_scale: vec2(1.0, 1.0),
+
             ambient:      0.25,
             diffuse:      1.0,
             specular:     0.0,
@@ -96,6 +100,7 @@ impl CameraComponent {
 }
 
 pub struct PointLightComponent {
+    //TODO: Coloured light?
     pub intensity: f32, // shadow softness?
 }
 

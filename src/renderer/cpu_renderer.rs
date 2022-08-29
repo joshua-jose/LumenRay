@@ -88,7 +88,7 @@ impl CPURenderer {
             idx as u32
         } else {
             debug!("Loading texture from path \"{}\"", path);
-            self.textures.push(Texture::from_path(path, uscale, vscale));
+            //self.textures.push(Texture::from_path(path, uscale, vscale));
             self.texture_paths.push(path.to_owned());
 
             (self.textures.len() - 1) as u32

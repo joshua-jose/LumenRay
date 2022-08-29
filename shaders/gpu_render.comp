@@ -10,6 +10,7 @@
 #define TAU 6.283185307
 
 const uint MAX_BOUNCES = 3;
+const float COLOUR_DEPTH = 256.0;  // 2^8
 
 // Data Structures
 struct Ray {
@@ -19,6 +20,7 @@ struct Ray {
 
 struct Material {
     uint tex_id;
+    vec2 tex_scale;
 
     float ambient;
     float diffuse;
@@ -59,7 +61,8 @@ struct Camera {
     float zdepth;
 };
 
-const Material NULL_MAT = Material(0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+const Material NULL_MAT =
+    Material(0, vec2(0.0, 0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
 
 // Compute shader workgroup size
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
@@ -104,15 +107,17 @@ float ray_sphere_intersect(Ray ray, Sphere sphere) {
         // if the discrim is close to 0, use a faster formula ignoring
         // discrim. This can be optimised by being looser on what is "close"
         // to zero.
+        /*
         if (abs(discrim) <= EPSILON) {
             d0 = -0.5 * b / a;
             d1 = d0;
         } else {
-            float sqrt_discrim = sqrt(discrim);
-            float q = -0.5 * (b + (sign(b) * sqrt_discrim));
-            d0 = q / a;
-            d1 = c / q;
-        }
+            */
+        float sqrt_discrim = sqrt(discrim);
+        float q = -0.5 * (b + (sign(b) * sqrt_discrim));
+        d0 = q / a;
+        d1 = c / q;
+        //}
 
         if (d0 > d1) {
             float temp = d0;
@@ -199,7 +204,9 @@ HitInfo cast_ray(Ray ray) {
             uv = vec2(dot(tangent, position), dot(bitangent, position));
         }
 
-        vec3 colour = texture(sampler2D(textures[mat.tex_id], samp), uv).xyz;
+        vec3 colour =
+            texture(sampler2D(textures[mat.tex_id], samp), uv * mat.tex_scale)
+                .xyz;
 
         return HitInfo(position, normal, mat, colour);
 
@@ -212,7 +219,7 @@ float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
             float light_intensity, Material mat) {
     float dist_sqd = dot(vec_to_light, vec_to_light);
     float light_radiance = light_intensity / dist_sqd;
-    vec3 vec_to_light_norm = vec_to_light / sqrt(dist_sqd);
+    vec3 vec_to_light_norm = vec_to_light * inversesqrt(dist_sqd);
 
     vec3 light_reflection = reflect(vec_to_light_norm, normal);
 
@@ -327,18 +334,35 @@ vec3 ACESFilm(vec3 x) {
     return (x * (a * x + b)) / (x * (c * x + d) + e);
 }
 
+const uint bayer[8][8] = {
+    {0, 32, 8, 40, 2, 34, 10, 42},     /* 8x8 Bayer ordered dithering  */
+    {48, 16, 56, 24, 50, 18, 58, 26},  /* pattern.  Each input pixel   */
+    {12, 44, 4, 36, 14, 46, 6, 38},    /* is scaled to the 0..63 range */
+    {60, 28, 52, 20, 62, 30, 54, 22},  /* before looking in this table */
+    {3, 35, 11, 43, 1, 33, 9, 41},     /* to determine the action.     */
+    {51, 19, 59, 27, 49, 17, 57, 25},  /*                              */
+    {15, 47, 7, 39, 13, 45, 5, 37},    /*                              */
+    {63, 31, 55, 23, 61, 29, 53, 21}}; /*                              */
+
+vec3 dither(uvec2 pix_coord) {
+    // go from 0..64 to 0..1 , then to -0.5..0.5
+    return vec3(bayer[pix_coord.x % 8][pix_coord.y % 8] / 64.0 - 0.5) /
+           COLOUR_DEPTH;
+}
+
 void main() {
-    if (gl_GlobalInvocationID.x >= imageSize(img).x ||
-        gl_GlobalInvocationID.y >= imageSize(img).y) {
+    uvec2 pix_coord = gl_GlobalInvocationID.xy;
+    if (pix_coord.x >= imageSize(img).x || pix_coord.y >= imageSize(img).y) {
         return;
     }
 
     // -0.5..0.5 uv coords
-    vec2 uv = (gl_GlobalInvocationID.xy - (vec2(imageSize(img).xy / 2.0))) /
-              vec2(imageSize(img).y);
+    vec2 uv =
+        (pix_coord - (vec2(imageSize(img).xy / 2.0))) / vec2(imageSize(img).y);
     uv.y = -uv.y;
 
     vec3 colour = aces_tonemap(render_pixel(uv));
+    colour += dither(pix_coord);
 
-    imageStore(img, ivec2(gl_GlobalInvocationID.xy), vec4(colour, 0.0));
+    imageStore(img, ivec2(pix_coord), vec4(colour, 0.0));
 }

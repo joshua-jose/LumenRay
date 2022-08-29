@@ -68,9 +68,7 @@ impl Engine {
         }
     }
 
-    pub fn get_texture_by_path(&mut self, path: &str, uscale: f32, vscale: f32) -> u32 {
-        self.renderer.get_texture_by_path(path, uscale, vscale)
-    }
+    pub fn get_texture_by_path(&mut self, path: &str) -> u32 { self.renderer.get_texture_by_path(path) }
     pub fn get_texture_by_colour(&mut self, colour: Vec3) -> u32 { self.renderer.get_texture_by_colour(colour) }
 
     pub fn run(mut self, mut scene: Scene) {

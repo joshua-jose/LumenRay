@@ -6,7 +6,7 @@ use lumen_ray::{
     },
     rgb,
     scene::Scene,
-    soft_gray, soft_green, soft_red, soft_yellow, vec3, white, Vec3,
+    soft_gray, soft_green, soft_red, soft_yellow, vec2, vec3, white, Vec3,
 };
 
 #[global_allocator]
@@ -29,26 +29,28 @@ fn main() {
         TransformComponent::with_pos(-1.2, -1.0, 0.1),
         SphereRenderComponent { radius: 1.0 },
         MaterialComponent {
-            tex_id:       engine.get_texture_by_colour(white!()),
-            ambient:      0.05,
-            diffuse:      0.03,
-            specular:     0.2,
-            shininess:    16.0,
+            tex_id: engine.get_texture_by_colour(white!()),
+            ambient: 0.05,
+            diffuse: 0.03,
+            specular: 0.2,
+            shininess: 16.0,
             reflectivity: 1.0,
-            emissive:     0.0,
+            emissive: 0.0,
+            ..Default::default()
         },
     ));
     scene.create_entity((
         TransformComponent::with_pos(1.0, -1.0, -0.7),
         SphereRenderComponent { radius: 1.0 },
         MaterialComponent {
-            tex_id:       engine.get_texture_by_colour(soft_yellow!()),
-            ambient:      0.1,
-            diffuse:      1.0,
-            specular:     0.9,
-            shininess:    32.0,
+            tex_id: engine.get_texture_by_colour(soft_yellow!()),
+            ambient: 0.1,
+            diffuse: 1.0,
+            specular: 0.9,
+            shininess: 32.0,
             reflectivity: 0.25,
-            emissive:     0.0,
+            emissive: 0.0,
+            ..Default::default()
         },
     ));
 
@@ -56,7 +58,8 @@ fn main() {
         TransformComponent::with_pos(0.0, -2.0, 0.0),
         PlaneRenderComponent::new(vec3(0.0, 1.0, 0.0)),
         MaterialComponent {
-            tex_id: engine.get_texture_by_path("assets/textures/Floor128.bmp", 0.4, 0.4),
+            tex_id: engine.get_texture_by_path("assets/textures/Floor128.bmp"),
+            tex_scale: vec2(0.4, 0.4),
             ..MaterialComponent::basic()
         },
     ));
