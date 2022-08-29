@@ -106,9 +106,9 @@ fn main() {
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(2.0, -1.0, 1.5),
+        TransformComponent::with_pos(2.0, -1.0, 2.5),
         //TransformComponent::with_pos(0.0, 3.0, -2.5),
-        PointLightComponent { intensity: 3.5 },
+        PointLightComponent { intensity: 5.0 },
     ));
 
     scene.create_entity((

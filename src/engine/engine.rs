@@ -69,13 +69,9 @@ impl Engine {
     }
 
     pub fn get_texture_by_path(&mut self, path: &str, uscale: f32, vscale: f32) -> u32 {
-        //self.renderer.get_texture_by_path(path, uscale, vscale)
-        0
+        self.renderer.get_texture_by_path(path, uscale, vscale)
     }
-    pub fn get_texture_by_colour(&mut self, colour: Vec3) -> u32 {
-        //self.renderer.get_texture_by_colour(colour)
-        0
-    }
+    pub fn get_texture_by_colour(&mut self, colour: Vec3) -> u32 { self.renderer.get_texture_by_colour(colour) }
 
     pub fn run(mut self, mut scene: Scene) {
         let mut metric_file = File::create("metrics.csv").unwrap();

@@ -17,6 +17,7 @@ use vulkano::{
         Instance, InstanceCreateInfo, InstanceExtensions,
     },
     pipeline::{ComputePipeline, Pipeline, PipelineBindPoint},
+    sampler::{Sampler, SamplerCreateInfo},
     shader::EntryPoint,
     swapchain::{
         acquire_next_image, AcquireError, ColorSpace, PresentMode, Surface, SurfaceCapabilities, SurfaceInfo,
@@ -36,7 +37,7 @@ use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, HasDescriptor}
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
 #[cfg(debug_assertions)]
-const ENABLE_VALIDATION_LAYERS: bool = true;
+const ENABLE_VALIDATION_LAYERS: bool = false; //FIXME: Buggy
 #[cfg(not(debug_assertions))]
 const ENABLE_VALIDATION_LAYERS: bool = false;
 
@@ -72,6 +73,7 @@ pub struct VkBackend {
 impl VkBackend {
     pub fn new(event_loop: &EventLoop<()>, title: &str, width: u32, height: u32) -> Self {
         // find out what extensions vulkano_win/winit requires
+
         let required_extensions = Self::get_required_instance_extensions(vulkano_win::required_extensions());
         let instance = Self::create_instance(required_extensions);
         let debug_callback = Self::setup_debug_callback(&instance);
@@ -123,7 +125,6 @@ impl VkBackend {
     const fn get_required_device_extensions() -> DeviceExtensions {
         DeviceExtensions {
             khr_swapchain: true,
-            khr_dynamic_rendering: true,
             ..DeviceExtensions::none()
         }
     }
@@ -131,7 +132,10 @@ impl VkBackend {
     /// Desired features our device
     const fn get_required_device_features() -> Features {
         Features {
-            dynamic_rendering: true,
+            runtime_descriptor_array: true,
+            shader_uniform_buffer_array_non_uniform_indexing: true,
+            descriptor_indexing: true,
+            descriptor_binding_variable_descriptor_count: true,
             ..Features::none()
         }
     }
@@ -215,6 +219,7 @@ impl VkBackend {
         if ENABLE_VALIDATION_LAYERS {
             enabled_layers.extend(VALIDATION_LAYERS.iter().map(|s| s.to_string()));
         }
+
         // create a new Vulkan instance
         Instance::new(InstanceCreateInfo {
             enabled_extensions: extensions,
@@ -433,8 +438,12 @@ impl VkBackend {
     }
 
     pub fn compute_setup(&mut self, shader: EntryPoint) {
-        let pipeline =
-            ComputePipeline::new(self.device.clone(), shader, &(), None, |_| {}).expect("Failed to create pipeline");
+        let pipeline = ComputePipeline::new(self.device.clone(), shader, &(), None, |layout| {
+            let binding = layout[1].bindings.get_mut(&1).unwrap();
+            binding.variable_descriptor_count = true;
+            binding.descriptor_count = 8;
+        })
+        .expect("Failed to create pipeline");
 
         let dimensions = self.swap_chain_images[0].dimensions().width_height();
 
@@ -470,9 +479,9 @@ impl VkBackend {
         Buffer::new(self.device.clone(), FRAMES_IN_FLIGHT + 1, len)
     }
 
-    pub fn compute_submit<Pc>(&mut self, push_constants: Pc, buffers: &[&dyn HasDescriptor]) {
-        //TODO: frames in flight
-
+    pub fn compute_submit<Pc>(
+        &mut self, push_constants: Pc, buffers: &[&dyn HasDescriptor], textures: &[&dyn HasDescriptor],
+    ) {
         let context = self.compute_context.as_mut().expect("Compute pipeline was not created");
         let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
         let frame = &mut context.frame_data[self.frame_number];
@@ -500,20 +509,34 @@ impl VkBackend {
 
         let dimensions = self.swap_chain_images[0].dimensions().width_height();
 
-        let mut descriptors = vec![WriteDescriptorSet::image_view(
+        let mut buffer_descriptors = vec![WriteDescriptorSet::image_view(
             0,
             ImageView::new_default(frame.frame_image.clone()).unwrap(),
         )];
 
-        descriptors.reserve(buffers.len());
-        let mut binding = descriptors.len() as u32;
+        buffer_descriptors.reserve(buffers.len());
+        let mut binding = buffer_descriptors.len() as u32;
         for b in buffers {
-            descriptors.push(b.get_descriptor(binding, self.frame_number));
+            buffer_descriptors.push(b.get_descriptor(binding, self.frame_number));
             binding += 1;
         }
-        let layout = context.pipeline.layout().set_layouts().get(0).unwrap();
+
+        let mut texture_descriptors = vec![WriteDescriptorSet::sampler(
+            0,
+            Sampler::new(self.device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap()).unwrap(),
+        )];
+        let mut binding = texture_descriptors.len() as u32;
+        for t in textures {
+            texture_descriptors.push(t.get_descriptor(binding, self.frame_number));
+            binding += 1;
+        }
+
+        let buf_layout = context.pipeline.layout().set_layouts().get(0).unwrap();
+        let tex_layout = context.pipeline.layout().set_layouts().get(1).unwrap();
+
         //TODO: Make this a descriptor pool
-        let set = PersistentDescriptorSet::new(layout.clone(), descriptors).unwrap();
+        let buf_set = PersistentDescriptorSet::new(buf_layout.clone(), buffer_descriptors).unwrap();
+        let tex_set = PersistentDescriptorSet::new_variable(tex_layout.clone(), 7, texture_descriptors).unwrap();
 
         //TODO: make this multiple submit? cache command buffer
         let mut builder = AutoCommandBufferBuilder::primary(
@@ -529,7 +552,7 @@ impl VkBackend {
                 PipelineBindPoint::Compute,
                 context.pipeline.layout().clone(),
                 0, // 0 is the index of our set
-                set,
+                (buf_set, tex_set),
             )
             .push_constants(context.pipeline.layout().clone(), 0, push_constants)
             .dispatch([
@@ -543,7 +566,6 @@ impl VkBackend {
                 self.swap_chain_images[image_num].clone(),
             ))
             .unwrap();
-
         let command_buffer = builder.build().unwrap();
 
         let future = frame

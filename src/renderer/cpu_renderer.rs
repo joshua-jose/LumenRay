@@ -255,7 +255,7 @@ impl CPURenderer {
             };
 
             let texture = &self.textures[mat.tex_id as usize];
-            let colour = texture.sample(u, v);
+            let colour = vec3(0.0, 0.0, 0.0);
 
             Some(HitInfo {
                 position,

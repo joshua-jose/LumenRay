@@ -1,16 +1,11 @@
-use crate::{renderer::srgb_to_linear, rgb, Vec3};
+use crate::{renderer::srgb_to_linear, Vec3};
 
 pub struct Texture {
-    // Unique ID per texture, a texture can be shared so multiple entities can point to same texture ID.
-    // When getting a texture ID, make it only gettable from the renderer, given a filepath. this way we can repeat IDs
-    // for the same filepath. All entities can be updated if a texture gets updated from the renderer.
-    // `renderer.get_texture(filepath)`, `renderer.update_texture(filepath)`
-    //id: u32,
     pub(super) width:  u32,
     pub(super) height: u32,
     pub(super) uscale: f32,
     pub(super) vscale: f32,
-    pub(super) data:   Vec<Vec3>,
+    pub(super) data:   Vec<f32>,
 }
 
 impl Texture {
@@ -21,7 +16,11 @@ impl Texture {
 
         for pixel in raw_image.pixels() {
             let [r, g, b] = pixel.0;
-            data.push(rgb!(r, g, b))
+            //data.extend_from_slice(&rgb!(r, g, b).to_array());
+            data.push(srgb_to_linear(r as f32 / 255.0));
+            data.push(srgb_to_linear(g as f32 / 255.0));
+            data.push(srgb_to_linear(b as f32 / 255.0));
+            data.push(1.0);
         }
         Self {
             data,
@@ -33,7 +32,7 @@ impl Texture {
     }
 
     pub fn from_colour_srgb(col: Vec3) -> Self {
-        let data = vec![col];
+        let data = vec![col.x, col.y, col.z, 1.0];
 
         Self {
             data,
@@ -42,16 +41,5 @@ impl Texture {
             uscale: 1.0,
             vscale: 1.0,
         }
-    }
-
-    pub fn sample(&self, u: f32, v: f32) -> Vec3 {
-        // nearest neighbour sampled
-        let width = self.width as f32;
-        let height = self.height as f32;
-        let x = ((u * self.uscale * width) % width).abs().floor() as u32;
-        let y = ((v * self.vscale * height) % height).abs().floor() as u32;
-        let i = x + (y * self.width);
-
-        self.data[i as usize]
     }
 }

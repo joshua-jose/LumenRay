@@ -25,25 +25,25 @@ macro_rules! white {
 #[macro_export]
 macro_rules! soft_red {
     () => {
-        rgb![235, 40, 40]
+        rgb![214, 81, 81]
     };
 }
 #[macro_export]
 macro_rules! soft_green {
     () => {
-        rgb![40, 235, 40]
+        rgb![81, 214, 81]
     };
 }
 #[macro_export]
 macro_rules! soft_blue {
     () => {
-        rgb![40, 40, 235]
+        rgb![81, 81, 214]
     };
 }
 #[macro_export]
 macro_rules! soft_gray {
     () => {
-        rgb![235, 235, 235]
+        rgb![214, 214, 214]
     };
 }
 #[macro_export]
