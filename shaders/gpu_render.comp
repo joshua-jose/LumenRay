@@ -87,10 +87,12 @@ layout(push_constant) uniform Constants {
 constants;
 
 float ray_sphere_intersect(Ray ray, Sphere sphere) {
-    // vector from sphere center to ray origin.
+    // TODO: reduce the amount of "if" statements in here
+    //  vector from sphere center to ray origin.
     vec3 c_to_o = ray.origin - sphere.position;
 
     // quadratic formula constants for line-sphere intersection
+    // TODO: precompute r^2?
     float a = dot(ray.direction, ray.direction);
     float b = 2.0 * dot(ray.direction, c_to_o);
     float c = dot(c_to_o, c_to_o) - (sphere.radius * sphere.radius);
@@ -215,6 +217,44 @@ HitInfo cast_ray(Ray ray) {
     }
 }
 
+float cast_shadow_ray(Ray ray, vec3 vec_to_light) {
+    // ray must be normalized
+    // ignores planes as they dont cast shadows
+    // uses distance between a point and a line to find the closest approach
+    // between the ray and a sphere
+    float light_dist = length(vec_to_light);
+    float least_dist = FLT_MAX;
+
+    const float SHADING_K = 16.0;  // TODO: make actual light size
+    float shade = 1.0;
+
+    for (int i = 0; i < spheres.data.length(); i++) {
+        Sphere sphere = spheres.data[i];
+        float obj_dist = ray_sphere_intersect(ray, sphere);
+
+        vec3 p = sphere.position;
+        vec3 a = ray.origin;
+        vec3 d = p - a;
+
+        float projected_length = dot(d, ray.direction);
+
+        if (projected_length > light_dist || projected_length < 0.0) continue;
+
+        float closest_approach =
+            length(d - (projected_length * ray.direction)) - sphere.radius;
+        closest_approach = max(closest_approach, 0.0);
+
+        shade = min(
+            shade, smoothstep(0.0, 1.0,
+                              SHADING_K * closest_approach / projected_length));
+
+        least_dist = min(least_dist, obj_dist);
+    }
+
+    return shade;
+}
+
+// TODO: Blinn Phong?
 float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
             float light_intensity, Material mat) {
     float dist_sqd = dot(vec_to_light, vec_to_light);
@@ -230,11 +270,12 @@ float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
         specular =
             pow(max(dot(light_reflection, view_direction), 0.0), mat.shininess);
     }
+    // TODO: Tint specular based on metallic parameter
     return light_radiance * (mat.diffuse * diffuse + mat.specular * specular);
 }
 
 vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
-    PointLight light = lights.data[0];
+    PointLight light = lights.data[0];  // TODO: multiple lights
     vec3 light_pos = light.position;
     float light_intensity = light.intensity;
 
@@ -245,18 +286,10 @@ vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
     vec3 position = info.position;
     vec3 normal = info.normal;
 
-    Ray shadow_ray = Ray(position + (normal * EPSILON * 5.0), vec_to_light);
-    HitInfo shadow_info = cast_ray(shadow_ray);  // TODO: cheaper cast, less
-                                                 // info
+    Ray shadow_ray =
+        Ray(position + (normal * EPSILON * 5.0), normalize(vec_to_light));
 
-    float shade;  // TODO: soft shadows
-    vec3 shadow_vec = shadow_info.position - position;
-
-    if (dot(shadow_vec, shadow_vec) > dot(vec_to_light, vec_to_light)) {
-        shade = 1.0;
-    } else {
-        shade = 0.0;
-    }
+    float shade = cast_shadow_ray(shadow_ray, vec_to_light);
 
     // Cheap fresnel
     // TODO: make more physically correct
@@ -334,7 +367,7 @@ vec3 ACESFilm(vec3 x) {
     return (x * (a * x + b)) / (x * (c * x + d) + e);
 }
 
-const uint bayer[8][8] = {
+const int bayer[8][8] = {
     {0, 32, 8, 40, 2, 34, 10, 42},     /* 8x8 Bayer ordered dithering  */
     {48, 16, 56, 24, 50, 18, 58, 26},  /* pattern.  Each input pixel   */
     {12, 44, 4, 36, 14, 46, 6, 38},    /* is scaled to the 0..63 range */
@@ -346,8 +379,8 @@ const uint bayer[8][8] = {
 
 vec3 dither(uvec2 pix_coord) {
     // go from 0..64 to 0..1 , then to -0.5..0.5
-    return vec3(bayer[pix_coord.x % 8][pix_coord.y % 8] / 64.0 - 0.5) /
-           COLOUR_DEPTH;
+    int dither_amount = bayer[pix_coord.x % 8][pix_coord.y % 8];
+    return vec3((dither_amount - 32) / 32.0) / COLOUR_DEPTH;
 }
 
 void main() {

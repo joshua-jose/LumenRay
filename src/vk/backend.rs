@@ -569,6 +569,8 @@ impl VkBackend {
             .unwrap();
         let command_buffer = builder.build().unwrap();
 
+        //TODO: Deal with swapchain recreation
+
         let future = frame
             .previous_frame_end
             .take()

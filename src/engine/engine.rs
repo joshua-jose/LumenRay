@@ -1,9 +1,7 @@
 use std::intrinsics::variant_count;
-use std::io::prelude::*;
 use std::sync::Arc;
 use std::{cell::RefCell, fs::File};
 
-use log::debug;
 use winit::{
     event::{
         DeviceEvent, ElementState, Event, KeyboardInput, ModifiersState, MouseButton, VirtualKeyCode, WindowEvent,
@@ -27,8 +25,6 @@ pub struct Engine {
     event_loop: Option<EventLoop<()>>,
     backend:    Arc<RefCell<VkBackend>>,
     renderer:   GPURenderer,
-    width:      u32,
-    height:     u32,
 
     keymap:         [bool; NUM_KEYS],
     modifiers:      ModifiersState,
@@ -55,8 +51,6 @@ impl Engine {
             event_loop,
             backend,
             renderer,
-            width,
-            height,
 
             keymap: [false; NUM_KEYS],
             modifiers: ModifiersState::empty(),
