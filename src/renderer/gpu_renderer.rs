@@ -17,8 +17,8 @@ use cs::ty::{Plane, PointLight, Sphere};
 use log::debug;
 
 use super::{
-    srgb_to_linear, MaterialComponent, PlaneRenderComponent, PointLightComponent, SphereRenderComponent, Texture,
-    TransformComponent,
+    srgb_to_linear, CameraComponent, MaterialComponent, PlaneRenderComponent, PointLightComponent,
+    SphereRenderComponent, Texture, TransformComponent,
 };
 
 pub struct GPURenderer {
@@ -41,6 +41,8 @@ impl GPURenderer {
 
         let cs = cs::load(backend.borrow().device.clone()).unwrap();
         backend.borrow_mut().compute_setup(cs.entry_point("main").unwrap());
+
+        // compute_context.add_pre_pass(radiosity);
 
         let albedo_array = TextureArray::new(backend.clone());
 
@@ -88,14 +90,21 @@ impl GPURenderer {
 
     pub fn draw(&mut self, scene: &mut Scene) {
         //TODO: move render scene stuff into here, it's redundant
-        let render_scene = scene.query_scene_objects();
 
-        let camera = render_scene.camera;
+        // get the first camera from the query
+        let (_, (camera_transform, camera_component)) = scene
+            .query_mut::<(&TransformComponent, &CameraComponent)>()
+            .into_iter()
+            .next()
+            .unwrap();
 
-        let rot_mat = camera.camera.get_rot_mat();
-        let fov_deg: f32 = camera.camera.fov;
+        //let render_scene = scene.query_scene_objects();
+        //let camera = render_scene.camera;
 
-        let camera_position = camera.transform.position.to_array();
+        let rot_mat = camera_component.get_rot_mat();
+        let fov_deg: f32 = camera_component.fov;
+
+        let camera_position = camera_transform.position.to_array();
         let camera_zdepth = (fov_deg * 0.5).to_radians().tan().recip();
         let camera_rotation = Mat4::from_mat3(rot_mat.transpose()).to_cols_array_2d();
 
@@ -166,12 +175,14 @@ impl From<&MaterialComponent> for cs::ty::Material {
     }
 }
 
+//TODO: get backend to deal with this (at runtime?)
 #[allow(clippy::needless_question_mark)]
 mod cs {
 
     vulkano_shaders::shader! {
         ty: "compute",
         path:"shaders/gpu_render.comp",
+        exact_entrypoint_interface: false, // Stops it from analysing what descriptors are *actually* used
         types_meta: {use bytemuck::{Pod, Zeroable}; #[derive(Copy,Clone,Pod, Zeroable, Default)] impl crate::vk::BufferType},
     }
 }

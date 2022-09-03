@@ -5,7 +5,7 @@
 // scene.prepared_query
 // scene.prepared_view
 
-use super::{Entity, NoSuchEntity, RenderScene};
+use super::{Entity, NoSuchEntity};
 use hecs::{DynamicBundle, World};
 use std::{cell::RefCell, error::Error, fmt, sync::Arc};
 
@@ -69,7 +69,7 @@ impl Scene {
         unsafe { (*ptr).query_mut::<Q>() }
     }
 
-    pub(super) fn query_owned<Q: hecs::Query>(
+    pub(super) fn _query_owned<Q: hecs::Query>(
         &self,
     ) -> Vec<(hecs::Entity, <<Q as hecs::Query>::Fetch as hecs::Fetch<'_>>::Item)> {
         let ptr = self.world.as_ptr();
@@ -85,11 +85,6 @@ impl Scene {
         }
     }
     */
-
-    pub fn query_scene_objects(&mut self) -> RenderScene {
-        //! Query won't be valid if Scene is destroyed
-        RenderScene::from_scene(self)
-    }
 }
 
 impl Default for Scene {

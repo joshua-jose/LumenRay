@@ -1,0 +1,196 @@
+#version 460 core
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_GOOGLE_include_directive : require
+
+#include "defines.glsl"
+#include "structs.glsl"
+
+// could be replaced with many textures?
+struct Sample {
+    vec3 position;
+    vec3 colour;
+    vec3 normal;
+};
+
+// Compute shader workgroup size
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer SphereData { Sphere data[]; }
+spheres;
+layout(set = 0, binding = 1) readonly buffer PlaneData { Plane data[]; }
+planes;
+layout(set = 0, binding = 2) readonly buffer LightData { PointLight data[]; }
+lights;
+
+layout(set = 1, binding = 0) uniform sampler samp;
+layout(set = 1, binding = 1) uniform texture2D textures[];
+
+layout(set = 2, binding = 0,
+       rgba32f) readonly uniform image2D current_emissives[];
+layout(set = 2, binding = 1, rgba32f) writeonly uniform image2D new_emissives[];
+layout(set = 2, binding = 2, rgba32f) uniform image2D lightmaps[];
+layout(set = 2, binding = 3, rgba32f) uniform image2D sample_positions[];
+layout(set = 2, binding = 4, rgba32f) uniform image2D sample_albedos[];
+layout(set = 2, binding = 5, rgba32f) uniform image2D sample_normals[];
+
+// TODO: make sure to take into account material diffuse multiplier
+
+// TODO: change const
+const uint NUM_LIGHTMAPS = 8;
+
+#include "colour.glsl"
+#include "intersection.glsl"
+#include "shading.glsl"
+
+void direct() {
+    uvec2 pix_coord = gl_GlobalInvocationID.xy;
+    uint obj_id = gl_GlobalInvocationID.z;
+    ivec2 resolution = imageSize(lightmaps[obj_id]);
+
+    uint obj_idx = obj_id;
+
+    if (pix_coord.x >= resolution.x || pix_coord.y >= resolution.y) {
+        return;
+    }
+
+    // 0.0..1.0 uv coords
+    vec2 uv = pix_coord / vec2(resolution.xy);
+
+    // Get object and properties
+    vec3 sample_position;
+    vec3 sample_albedo;
+    vec3 sample_normal;
+    Material mat;
+
+    if (obj_idx > spheres.data.length()) {
+        // Object is a plane
+        obj_idx -= spheres.data.length();
+        Plane plane = planes.data[obj_idx];
+        mat = plane.mat;
+
+        vec3 tangent = plane.tangent;
+        vec3 bitangent = cross(plane.normal, tangent);
+        vec3 tangent_vec = tangent * uv.x;
+        vec3 bitangent_vec = bitangent * uv.y;
+
+        sample_position = plane.position + tangent_vec + bitangent_vec;
+        sample_albedo = sample_texture(mat, uv);
+        sample_normal = plane.normal;
+    } else {
+        Sphere sphere = spheres.data[obj_idx];
+        mat = sphere.mat;
+
+        float theta = ((uv.x * 2.0) - 1.0) * PI;
+        float phi = (uv.y - 0.5) * PI;
+
+        sample_normal = vec3(sin(theta), sin(phi), -cos(theta));
+        sample_position = sphere.position + (sphere.radius * sample_normal);
+        sample_albedo = sample_texture(mat, uv);
+    }
+
+    // Save sample info
+    imageStore(sample_positions[obj_id], ivec2(pix_coord),
+               vec4(sample_position, 0.0));
+    imageStore(sample_albedos[obj_id], ivec2(pix_coord),
+               vec4(sample_albedo, 0.0));
+    imageStore(sample_normals[obj_id], ivec2(pix_coord),
+               vec4(sample_normal, 0.0));
+
+    // begin calculating direct lighting on this patch
+    PointLight light = lights.data[0];  // TODO: multiple lights
+    vec3 light_pos = light.position;
+    float light_intensity = light.intensity;
+    vec3 vec_to_light = light_pos - sample_position;
+    vec3 vec_to_light_norm = normalize(vec_to_light);
+
+    float dist_sqd = dot(vec_to_light, vec_to_light);
+    float light_radiance = light_intensity / dist_sqd;
+
+    Ray shadow_ray = Ray(sample_position + (sample_normal * EPSILON * 5.0),
+                         vec_to_light_norm);
+
+    float shade = cast_shadow_ray(shadow_ray, vec_to_light_norm);
+
+    float diffuse = shade * max(dot(sample_normal, vec_to_light_norm), 0.0) *
+                    light_radiance;
+
+    vec3 emission = sample_albedo * (diffuse + mat.emissive);
+    vec3 incident = sample_albedo * mat.emissive;
+
+    imageStore(new_emissives[obj_id], ivec2(pix_coord), vec4(emission, 0.0));
+    imageStore(lightmaps[obj_id], ivec2(pix_coord), vec4(incident, 0.0));
+}
+
+void indirect() {
+    // TODO: pack lightmaps in execution? instead of using z id
+    uvec2 pix_coord = gl_GlobalInvocationID.xy;  // TODO: rename
+    uint obj_id = gl_GlobalInvocationID.z;
+    ivec2 resolution = imageSize(lightmaps[obj_id]);
+
+    if (pix_coord.x >= resolution.x || pix_coord.y >= resolution.y) {
+        return;
+    }
+
+    // 0.0..1.0 uv coords
+    vec2 uv = pix_coord / vec2(resolution.xy);
+
+    // do radiosity
+
+    vec3 sample_position =
+        imageLoad(sample_positions[obj_id], ivec2(pix_coord)).xyz;
+    vec3 sample_albedo =
+        imageLoad(sample_albedos[obj_id], ivec2(pix_coord)).xyz;
+    vec3 sample_normal =
+        imageLoad(sample_normals[obj_id], ivec2(pix_coord)).xyz;
+
+    vec3 incident = vec3(0.0);
+
+    for (int i = 0; i < NUM_LIGHTMAPS; i++) {
+        if (i == obj_id) {
+            continue;  // no self illumination
+        }
+        vec2 lm_size = imageSize(lightmaps[i]);
+        for (int x = 0; x < lm_size.x; x++) {
+            for (int y = 0; y < lm_size.y; y++) {
+                // patch that is lighting our target patch
+                vec3 light_pos =
+                    imageLoad(sample_positions[i], ivec2(x, y)).xyz;
+                vec3 light_colour =
+                    imageLoad(current_emissives[i], ivec2(x, y)).xyz;
+                vec3 light_normal =
+                    imageLoad(sample_normals[i], ivec2(x, y)).xyz;
+
+                vec3 vec_to_light = light_pos - sample_position;
+                vec3 vec_to_light_norm = normalize(vec_to_light);
+
+                float dist_sqd = dot(vec_to_light, vec_to_light);
+
+                Ray shadow_ray =
+                    Ray(sample_position + (sample_normal * EPSILON * 5.0),
+                        vec_to_light_norm);
+
+                HitInfo hit = cast_ray(shadow_ray);
+
+                vec3 delta = hit.position - light_pos;
+                if (dot(delta, delta) < 0.01) {
+                    /* compute lambertian attenuation of light from one patch to
+                       another we calculate the dot product between each plane's
+                       normal, and the vector between them. then we multiply
+                       those numbers together */
+                    float attenuation = dot(sample_normal, vec_to_light_norm) *
+                                        -dot(light_normal, vec_to_light_norm);
+                    float diffuse = max(attenuation, 0.0) / dist_sqd;
+
+                    incident += light_colour * diffuse;
+                }
+            }
+        }
+    }
+
+    vec3 old_lightmap_colour =
+        imageLoad(lightmaps[obj_id], ivec2(pix_coord)).xyz;
+
+    imageStore(lightmaps[obj_id], ivec2(pix_coord),
+               vec4(old_lightmap_colour + incident, 0.0));
+    imageStore(new_emissives[obj_id], ivec2(pix_coord), vec4(incident, 0.0));
+}

@@ -207,20 +207,3 @@ impl Engine {
         self.render(scene, metric_file);
     }
 }
-
-//TODO: get backend to deal with this (at runtime?)
-#[allow(clippy::needless_question_mark)]
-mod vs {
-    vulkano_shaders::shader! {
-        ty: "vertex",
-        path:"shaders/cpu_render.vert"
-    }
-}
-
-#[allow(clippy::needless_question_mark)]
-mod fs {
-    vulkano_shaders::shader! {
-        ty: "fragment",
-        path:"shaders/cpu_render.frag"
-    }
-}
