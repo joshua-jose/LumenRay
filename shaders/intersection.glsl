@@ -37,6 +37,13 @@ float ray_sphere_intersect(Ray ray, Sphere sphere) {
         d1 = c / q;
         //}
 
+        /* TODO:
+        if (d0 < 0.0) d0 = FLT_MAX;
+        if (d1 < 0.0) d1 = FLT_MAX;
+
+        d0 = min(d0, d1);
+        */
+
         if (d0 > d1) {
             float temp = d0;
             d0 = d1;

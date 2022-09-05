@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use vulkano::{
     command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage},
-    descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet},
     device::{
         physical::{PhysicalDevice, PhysicalDeviceType},
         Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo,
@@ -17,8 +16,6 @@ use vulkano::{
         Instance, InstanceCreateInfo, InstanceExtensions,
     },
     pipeline::{ComputePipeline, Pipeline, PipelineBindPoint},
-    sampler::{Sampler, SamplerCreateInfo},
-    shader::EntryPoint,
     swapchain::{
         acquire_next_image, AcquireError, ColorSpace, PresentMode, Surface, SurfaceCapabilities, SurfaceInfo,
         Swapchain, SwapchainCreateInfo,
@@ -33,7 +30,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, HasDescriptor};
+use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, Shader};
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
 #[cfg(debug_assertions)]
@@ -437,13 +434,25 @@ impl VkBackend {
             .collect::<Vec<_>>();
     }
 
-    pub fn compute_setup(&mut self, shader: EntryPoint) {
-        let pipeline = ComputePipeline::new(self.device.clone(), shader, &(), None, |layout| {
-            let binding = layout[1].bindings.get_mut(&1).unwrap();
-            binding.variable_descriptor_count = true;
-            binding.descriptor_count = 8; //TODO: Variable
-        })
-        .expect("Failed to create pipeline");
+    pub fn compute_setup(&mut self, shaders: Vec<Shader>) {
+        let mut pipelines = Vec::with_capacity(shaders.len());
+        for shader in &shaders {
+            let pipeline = ComputePipeline::new(self.device.clone(), shader.get_entry_point(), &(), None, |layout| {
+                // Find variable descriptors and set them up
+                for (set_idx, set) in shader.sets.iter().enumerate() {
+                    let layout_bindings = &mut layout[set_idx].bindings;
+                    for (binding, descriptor) in set.descriptors.iter().enumerate() {
+                        if descriptor.is_variable() {
+                            let layout_binding = layout_bindings.get_mut(&(binding as u32)).unwrap();
+                            layout_binding.variable_descriptor_count = true;
+                            layout_binding.descriptor_count = 8; // TODO: variable
+                        }
+                    }
+                }
+            })
+            .expect("Failed to create pipeline");
+            pipelines.push(pipeline);
+        }
 
         let dimensions = self.swap_chain_images[0].dimensions().width_height();
 
@@ -472,16 +481,26 @@ impl VkBackend {
 
         let frame_data: [ComputeFrameData; FRAMES_IN_FLIGHT] = std::array::from_fn(create_frame_data);
 
-        self.compute_context = Some(ComputeContext { pipeline, frame_data })
+        self.compute_context = Some(ComputeContext {
+            pipeline: pipelines[0].clone(), //TODO: multiple pipelines/shaders
+            shaders,
+            frame_data,
+        })
     }
 
-    pub fn gen_buffer<T: BufferType>(&self, len: u64) -> Buffer<T> {
-        Buffer::new(self.device.clone(), FRAMES_IN_FLIGHT + 1, len)
+    pub fn gen_buffer<T: BufferType>(&self, len: u64) -> Arc<Buffer<T>> {
+        Arc::new(Buffer::new(self.device.clone(), self.frames_in_flight() + 1, len))
     }
 
-    pub fn compute_submit<Pc>(
-        &mut self, push_constants: Pc, buffers: &[&dyn HasDescriptor], textures: &[&dyn HasDescriptor],
-    ) {
+    pub fn frames_in_flight(&self) -> usize { FRAMES_IN_FLIGHT }
+
+    pub(super) fn frame_image(&self) -> Arc<AttachmentImage> {
+        let context = self.compute_context.as_ref().expect("Compute pipeline was not created");
+
+        context.frame_data[self.frame_number].frame_image.clone()
+    }
+
+    pub fn compute_submit<Pc>(&mut self, push_constants: Pc) {
         let context = self.compute_context.as_mut().expect("Compute pipeline was not created");
         let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
         let frame = &mut context.frame_data[self.frame_number];
@@ -507,37 +526,17 @@ impl VkBackend {
             Err(e) => panic!("Failed to acquire next image: {:?}", e),
         };
 
+        let shader = &context.shaders[0];
+        let layouts = context.pipeline.layout().set_layouts();
+        let mut vk_sets = Vec::with_capacity(shader.sets.len());
+
+        for (set_number, set) in shader.sets.iter().enumerate() {
+            let layout = layouts.get(set_number).unwrap();
+            let vk_set = set.get_descriptor_set(layout.clone(), self.frame_number);
+            vk_sets.push(vk_set);
+        }
+
         let dimensions = self.swap_chain_images[0].dimensions().width_height();
-
-        let mut buffer_descriptors = vec![WriteDescriptorSet::image_view(
-            0,
-            ImageView::new_default(frame.frame_image.clone()).unwrap(),
-        )];
-
-        buffer_descriptors.reserve(buffers.len());
-        let mut binding = buffer_descriptors.len() as u32;
-        for b in buffers {
-            buffer_descriptors.push(b.get_descriptor(binding, self.frame_number));
-            binding += 1;
-        }
-
-        let mut texture_descriptors = vec![WriteDescriptorSet::sampler(
-            0,
-            Sampler::new(self.device.clone(), SamplerCreateInfo::simple_repeat_linear_no_mipmap()).unwrap(),
-        )];
-        let mut binding = texture_descriptors.len() as u32;
-        for t in textures {
-            texture_descriptors.push(t.get_descriptor(binding, self.frame_number));
-            binding += 1;
-        }
-
-        let buf_layout = context.pipeline.layout().set_layouts().get(0).unwrap();
-        let tex_layout = context.pipeline.layout().set_layouts().get(1).unwrap();
-
-        //TODO: Make this a descriptor pool
-        //TODO: allow setup of variable descriptor sets and calculate length
-        let buf_set = PersistentDescriptorSet::new(buf_layout.clone(), buffer_descriptors).unwrap();
-        let tex_set = PersistentDescriptorSet::new_variable(tex_layout.clone(), 7, texture_descriptors).unwrap();
 
         //TODO: make this multiple submit? cache command buffer
         let mut builder = AutoCommandBufferBuilder::primary(
@@ -553,7 +552,7 @@ impl VkBackend {
                 PipelineBindPoint::Compute,
                 context.pipeline.layout().clone(),
                 0, // 0 is the index of our set
-                (buf_set, tex_set),
+                vk_sets,
             )
             .push_constants(context.pipeline.layout().clone(), 0, push_constants)
             .dispatch([
@@ -568,6 +567,9 @@ impl VkBackend {
             ))
             .unwrap();
         let command_buffer = builder.build().unwrap();
+
+        //TODO: when doing automatic command buffer creation for each shader,make blitting a seperate command buffer
+        // this way it can just be tacked onto the end,and the other command buffers can be persistent
 
         //TODO: Deal with swapchain recreation
 

@@ -194,3 +194,5 @@ void indirect() {
                vec4(old_lightmap_colour + incident, 0.0));
     imageStore(new_emissives[obj_id], ivec2(pix_coord), vec4(incident, 0.0));
 }
+
+void main() { direct(); }

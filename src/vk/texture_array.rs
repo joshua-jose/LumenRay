@@ -1,4 +1,7 @@
-use std::{cell::RefCell, sync::Arc};
+use std::{
+    cell::RefCell,
+    sync::{Arc, RwLock},
+};
 
 use log::debug;
 use vulkano::{
@@ -12,18 +15,18 @@ use super::{HasDescriptor, VkBackend};
 
 pub struct TextureArray {
     queue:    Arc<Queue>,
-    textures: Vec<Arc<ImmutableImage>>,
+    textures: RwLock<Vec<Arc<ImmutableImage>>>,
 }
 
 impl TextureArray {
     pub fn new(backend: Arc<RefCell<VkBackend>>) -> Self {
         Self {
             queue:    backend.borrow().compute_queue.clone(),
-            textures: vec![],
+            textures: RwLock::new(vec![]),
         }
     }
 
-    pub fn push_texture(&mut self, width: u32, height: u32, data: Vec<f32>) {
+    pub fn push_texture(&self, width: u32, height: u32, data: Vec<f32>) {
         let (image, future) = ImmutableImage::from_iter(
             data,
             vulkano::image::ImageDimensions::Dim2d {
@@ -38,7 +41,7 @@ impl TextureArray {
         .unwrap();
         debug!("Uploading a texture to GPU");
         future.flush().unwrap();
-        self.textures.push(image);
+        self.textures.write().unwrap().push(image);
     }
 
     //pub fn set_texture(&mut self, id: u32, ...)
@@ -46,11 +49,15 @@ impl TextureArray {
 
 impl HasDescriptor for TextureArray {
     fn get_descriptor(&self, binding: u32, _frame_number: usize) -> WriteDescriptorSet {
-        let views = self
-            .textures
+        let textures_reader = self.textures.read().unwrap();
+        let views = textures_reader
             .iter()
             .map(|image| ImageView::new_default(image.clone()).unwrap() as Arc<dyn ImageViewAbstract>);
 
         WriteDescriptorSet::image_view_array(binding, 0, views)
     }
+
+    fn is_variable(&self) -> bool { true }
+
+    fn variable_descriptor_count(&self) -> u32 { self.textures.read().unwrap().len() as u32 }
 }

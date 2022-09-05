@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use vulkano::{image::AttachmentImage, pipeline::ComputePipeline, sync::GpuFuture};
 
-use super::FRAMES_IN_FLIGHT;
+use super::{Shader, FRAMES_IN_FLIGHT};
 
 pub struct ComputeFrameData {
     pub frame_image:        Arc<AttachmentImage>,
@@ -10,7 +10,7 @@ pub struct ComputeFrameData {
 }
 
 pub struct ComputeContext {
-    pub pipeline: Arc<ComputePipeline>,
-
+    pub pipeline:   Arc<ComputePipeline>,
+    pub shaders:    Vec<Shader>,
     pub frame_data: [ComputeFrameData; FRAMES_IN_FLIGHT],
 }

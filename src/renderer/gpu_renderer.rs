@@ -9,12 +9,12 @@ use crate::{
     rgb,
     scene::Scene,
     soft_blue,
-    vk::{Buffer, TextureArray, VkBackend},
+    vk::{Buffer, OutputImage, Sampler, Set, Shader, TextureArray, VkBackend},
     Mat4, Vec3,
 };
 
-use cs::ty::{Plane, PointLight, Sphere};
 use log::debug;
+use render_mod::ty::{Plane, PointLight, Sphere};
 
 use super::{
     srgb_to_linear, CameraComponent, MaterialComponent, PlaneRenderComponent, PointLightComponent,
@@ -24,27 +24,48 @@ use super::{
 pub struct GPURenderer {
     backend: Arc<RefCell<VkBackend>>,
 
-    sphere_buffer: Buffer<Sphere>,
-    plane_buffer:  Buffer<Plane>,
-    lights_buffer: Buffer<PointLight>,
+    sphere_buffer: Arc<Buffer<Sphere>>,
+    plane_buffer:  Arc<Buffer<Plane>>,
+    lights_buffer: Arc<Buffer<PointLight>>,
 
     texture_paths: Vec<String>,
-    albedo_array:  TextureArray,
+    albedo_array:  Arc<TextureArray>,
 }
+
+//TODO: report variable descriptor bug
 
 #[allow(clippy::new_without_default)]
 impl GPURenderer {
     pub fn new(backend: Arc<RefCell<VkBackend>>) -> Self {
+        let output_image = OutputImage::new(backend.clone());
+
+        //TODO: gen_buffers inconsistent
         let sphere_buffer = backend.borrow().gen_buffer(1);
         let plane_buffer = backend.borrow().gen_buffer(1);
         let lights_buffer = backend.borrow().gen_buffer(1);
 
-        let cs = cs::load(backend.borrow().device.clone()).unwrap();
-        backend.borrow_mut().compute_setup(cs.entry_point("main").unwrap());
+        let tex_sampler = Arc::new(Sampler::new(backend.clone()));
+        let albedo_array = Arc::new(TextureArray::new(backend.clone()));
 
-        // compute_context.add_pre_pass(radiosity);
+        let render_mod = render_mod::load(backend.borrow().device.clone()).unwrap();
+        let radiosity_mod = radiosity_mod::load(backend.borrow().device.clone()).unwrap();
 
-        let albedo_array = TextureArray::new(backend.clone());
+        let render_shader_sets = [
+            Set::new(&[
+                output_image,
+                sphere_buffer.clone(),
+                plane_buffer.clone(),
+                lights_buffer.clone(),
+            ]),
+            Set::new(&[tex_sampler, albedo_array.clone()]),
+        ];
+        let render_shader = Shader::load_from_module(render_mod, &render_shader_sets);
+
+        let radiosity_shader = Shader::load_from_module(radiosity_mod, &render_shader_sets);
+
+        backend
+            .borrow_mut()
+            .compute_setup(vec![render_shader /* , radiosity_shader*/]);
 
         let mut renderer = Self {
             backend,
@@ -54,6 +75,7 @@ impl GPURenderer {
             texture_paths: vec![],
             albedo_array,
         };
+
         renderer.get_texture_by_colour(soft_blue!());
         renderer
     }
@@ -146,19 +168,15 @@ impl GPURenderer {
         self.plane_buffer.write(&planes);
         self.lights_buffer.write(&lights);
 
-        self.backend.borrow_mut().compute_submit(
-            cs::ty::Constants {
-                camera_position,
-                camera_rotation,
-                camera_zdepth,
-            },
-            &[&self.sphere_buffer, &self.plane_buffer, &self.lights_buffer],
-            &[&self.albedo_array],
-        );
+        self.backend.borrow_mut().compute_submit(render_mod::ty::Constants {
+            camera_position,
+            camera_rotation,
+            camera_zdepth,
+        });
     }
 }
 
-impl From<&MaterialComponent> for cs::ty::Material {
+impl From<&MaterialComponent> for render_mod::ty::Material {
     fn from(m: &MaterialComponent) -> Self {
         Self {
             tex_id: m.tex_id,
@@ -177,11 +195,22 @@ impl From<&MaterialComponent> for cs::ty::Material {
 
 //TODO: get backend to deal with this (at runtime?)
 #[allow(clippy::needless_question_mark)]
-mod cs {
+mod render_mod {
 
     vulkano_shaders::shader! {
         ty: "compute",
         path:"shaders/gpu_render.comp",
+        exact_entrypoint_interface: false, // Stops it from analysing what descriptors are *actually* used
+        types_meta: {use bytemuck::{Pod, Zeroable}; #[derive(Copy,Clone,Pod, Zeroable, Default)] impl crate::vk::BufferType},
+    }
+}
+
+#[allow(clippy::needless_question_mark)]
+mod radiosity_mod {
+
+    vulkano_shaders::shader! {
+        ty: "compute",
+        path:"shaders/radiosity.comp",
         exact_entrypoint_interface: false, // Stops it from analysing what descriptors are *actually* used
         types_meta: {use bytemuck::{Pod, Zeroable}; #[derive(Copy,Clone,Pod, Zeroable, Default)] impl crate::vk::BufferType},
     }

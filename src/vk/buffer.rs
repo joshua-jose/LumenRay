@@ -1,4 +1,7 @@
-use std::{mem::size_of, sync::Arc};
+use std::{
+    mem::size_of,
+    sync::{Arc, RwLock},
+};
 
 use bytemuck::Pod;
 use log::debug;
@@ -7,6 +10,8 @@ use vulkano::{
     descriptor_set::WriteDescriptorSet,
     device::Device,
 };
+
+use super::HasDescriptor;
 
 pub trait BufferType: Send + Sync + Pod {}
 
@@ -22,8 +27,8 @@ where
     T: BufferType,
 {
     device:        Arc<Device>,
-    buffers:       Vec<Arc<CpuAccessibleBuffer<[T]>>>,
-    active_buffer: usize,
+    buffers:       RwLock<Vec<Arc<CpuAccessibleBuffer<[T]>>>>,
+    active_buffer: RwLock<usize>,
 }
 
 impl<T> Buffer<T>
@@ -40,16 +45,19 @@ where
         }
         Self {
             device,
-            buffers,
-            active_buffer: 0,
+            buffers: RwLock::new(buffers),
+            active_buffer: RwLock::new(0),
         }
     }
 
-    pub fn write(&mut self, data: &[T]) {
-        self.active_buffer += 1;
-        self.active_buffer %= self.buffers.len();
+    pub fn write(&self, data: &[T]) {
+        let mut buffers_writer = self.buffers.write().unwrap();
+        let mut active_buffer = self.active_buffer.write().unwrap();
 
-        let buffer = &mut self.buffers[self.active_buffer];
+        *active_buffer += 1;
+        *active_buffer %= buffers_writer.len();
+
+        let buffer = &mut buffers_writer[*active_buffer];
         if data.len() != (buffer.size() as usize / (size_of::<T>())) {
             *buffer = CpuAccessibleBuffer::from_iter(self.device.clone(), USAGE, false, data.to_owned()).unwrap();
         } else {
@@ -67,10 +75,9 @@ where
 
 impl<T: BufferType> HasDescriptor for Buffer<T> {
     fn get_descriptor(&self, binding: u32, _frame_number: usize) -> WriteDescriptorSet {
-        WriteDescriptorSet::buffer(binding, self.buffers[self.active_buffer].clone())
-    }
-}
+        let buffers_reader = self.buffers.read().unwrap();
+        let active_buffer = *self.active_buffer.read().unwrap();
 
-pub trait HasDescriptor {
-    fn get_descriptor(&self, binding: u32, buffer_idx: usize) -> WriteDescriptorSet;
+        WriteDescriptorSet::buffer(binding, buffers_reader[active_buffer].clone())
+    }
 }

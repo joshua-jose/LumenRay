@@ -17,6 +17,7 @@ const HEIGHT: u32 = 600;
 
 // TODO: write tests and add codecov
 // TODO: add bench with default scene
+//TODO: replace unwraps with result propogation (`?`)
 
 fn main() {
     let mut log_builder = env_logger::Builder::new();
