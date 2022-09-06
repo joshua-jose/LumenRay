@@ -10,7 +10,7 @@ pub struct ComputeFrameData {
 }
 
 pub struct ComputeContext {
-    pub pipeline:   Arc<ComputePipeline>,
+    pub pipelines:  Vec<Arc<ComputePipeline>>,
     pub shaders:    Vec<Shader>,
     pub frame_data: [ComputeFrameData; FRAMES_IN_FLIGHT],
 }

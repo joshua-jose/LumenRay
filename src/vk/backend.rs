@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use vulkano::{
-    command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage},
+    command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryCommandBuffer},
     device::{
         physical::{PhysicalDevice, PhysicalDeviceType},
         Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo,
@@ -34,15 +34,11 @@ use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, Shader};
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
 #[cfg(debug_assertions)]
-const ENABLE_VALIDATION_LAYERS: bool = false; //FIXME: Buggy
+const ENABLE_VALIDATION_LAYERS: bool = true; //FIXME: Buggy
 #[cfg(not(debug_assertions))]
 const ENABLE_VALIDATION_LAYERS: bool = false;
 
 const VALIDATION_LAYERS: &[&str] = &["VK_LAYER_KHRONOS_validation"];
-
-//TODO: change
-const COMPUTE_WORKGROUP_X: u32 = 8;
-const COMPUTE_WORKGROUP_Y: u32 = 8;
 
 pub const FRAMES_IN_FLIGHT: usize = 1;
 
@@ -445,7 +441,7 @@ impl VkBackend {
                         if descriptor.is_variable() {
                             let layout_binding = layout_bindings.get_mut(&(binding as u32)).unwrap();
                             layout_binding.variable_descriptor_count = true;
-                            layout_binding.descriptor_count = 8; // TODO: variable
+                            layout_binding.descriptor_count = 7; // TODO: variable
                         }
                     }
                 }
@@ -482,7 +478,7 @@ impl VkBackend {
         let frame_data: [ComputeFrameData; FRAMES_IN_FLIGHT] = std::array::from_fn(create_frame_data);
 
         self.compute_context = Some(ComputeContext {
-            pipeline: pipelines[0].clone(), //TODO: multiple pipelines/shaders
+            pipelines,
             shaders,
             frame_data,
         })
@@ -500,10 +496,16 @@ impl VkBackend {
         context.frame_data[self.frame_number].frame_image.clone()
     }
 
-    pub fn compute_submit<Pc>(&mut self, push_constants: Pc) {
+    pub fn compute_submit<Pc: Copy>(&mut self, push_constants: &[Option<Pc>]) {
         let context = self.compute_context.as_mut().expect("Compute pipeline was not created");
         let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
         let frame = &mut context.frame_data[self.frame_number];
+
+        assert_eq!(
+            push_constants.len(),
+            context.shaders.len(),
+            "The number of push constants should be equal to the number of shaders"
+        );
 
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
@@ -525,64 +527,91 @@ impl VkBackend {
             }
             Err(e) => panic!("Failed to acquire next image: {:?}", e),
         };
-
-        let shader = &context.shaders[0];
-        let layouts = context.pipeline.layout().set_layouts();
-        let mut vk_sets = Vec::with_capacity(shader.sets.len());
-
-        for (set_number, set) in shader.sets.iter().enumerate() {
-            let layout = layouts.get(set_number).unwrap();
-            let vk_set = set.get_descriptor_set(layout.clone(), self.frame_number);
-            vk_sets.push(vk_set);
-        }
-
         let dimensions = self.swap_chain_images[0].dimensions().width_height();
 
-        //TODO: make this multiple submit? cache command buffer
-        let mut builder = AutoCommandBufferBuilder::primary(
-            self.device.clone(),
-            self.compute_queue.family(),
-            CommandBufferUsage::OneTimeSubmit,
-        )
-        .unwrap();
+        let mut command_buffers = Vec::with_capacity(context.shaders.len());
+        for (shader_idx, shader) in context.shaders.iter().enumerate() {
+            // Start creating command buffers for each shader
+            let pipeline = &context.pipelines[shader_idx];
 
-        builder
-            .bind_pipeline_compute(context.pipeline.clone())
-            .bind_descriptor_sets(
+            let layouts = pipeline.layout().set_layouts();
+            let mut vk_sets = Vec::with_capacity(shader.sets.len());
+
+            for (set_number, set) in shader.sets.iter().enumerate() {
+                let layout = layouts.get(set_number).unwrap();
+                let vk_set = set.get_descriptor_set(layout.clone(), self.frame_number);
+                vk_sets.push(vk_set);
+            }
+
+            //TODO: make this multiple submit? cache command buffer
+            let mut builder = AutoCommandBufferBuilder::primary(
+                self.device.clone(),
+                self.compute_queue.family(),
+                CommandBufferUsage::OneTimeSubmit,
+            )
+            .unwrap();
+
+            builder.bind_pipeline_compute(pipeline.clone()).bind_descriptor_sets(
                 PipelineBindPoint::Compute,
-                context.pipeline.layout().clone(),
+                pipeline.layout().clone(),
                 0, // 0 is the index of our set
                 vk_sets,
-            )
-            .push_constants(context.pipeline.layout().clone(), 0, push_constants)
-            .dispatch([
-                (dimensions[0] / COMPUTE_WORKGROUP_X) + 1,
-                (dimensions[1] / COMPUTE_WORKGROUP_Y) + 1,
-                1,
-            ])
-            .unwrap()
-            .blit_image(BlitImageInfo::images(
-                frame.frame_image.clone(),
-                self.swap_chain_images[image_num].clone(),
-            ))
-            .unwrap();
-        let command_buffer = builder.build().unwrap();
+            );
+            // check if this shader takes push constants
+            if let Some(pc) = &push_constants[shader_idx] {
+                builder.push_constants(pipeline.layout().clone(), 0, *pc);
+            }
+
+            let group_counts = match shader.dispatch_size {
+                crate::vk::DispatchSize::FrameResolution => [
+                    (dimensions[0] / shader.workgroup_size.0) + 1,
+                    (dimensions[1] / shader.workgroup_size.1) + 1,
+                    1,
+                ],
+                crate::vk::DispatchSize::Custom(x, y, z) => [
+                    (x / shader.workgroup_size.0) + 1,
+                    (y / shader.workgroup_size.1) + 1,
+                    (z / shader.workgroup_size.1) + 1,
+                ],
+            };
+
+            builder.dispatch(group_counts).unwrap();
+
+            // Check if this is the last shader, if so we blit to the swapchain
+            if shader_idx == context.shaders.len() - 1 {
+                builder
+                    .blit_image(BlitImageInfo::images(
+                        frame.frame_image.clone(),
+                        self.swap_chain_images[image_num].clone(),
+                    ))
+                    .unwrap();
+            }
+
+            let command_buffer = builder.build().unwrap();
+            command_buffers.push(command_buffer);
+        }
 
         //TODO: when doing automatic command buffer creation for each shader,make blitting a seperate command buffer
         // this way it can just be tacked onto the end,and the other command buffers can be persistent
 
         //TODO: Deal with swapchain recreation
 
-        let future = frame
-            .previous_frame_end
-            .take()
-            .unwrap()
-            .join(acquire_future)
-            .then_execute(self.compute_queue.clone(), command_buffer)
-            .unwrap()
-            // This function does not actually present the image immediately. Instead it submits a
-            // present command at the end of the queue. This means that it will only be presented once
-            // the GPU has finished executing the command buffer that draws.
+        // wait for the previous frame to end
+        let mut future = frame.previous_frame_end.take().unwrap().join(acquire_future).boxed();
+
+        // schedule execution of all command buffer
+        for command in command_buffers {
+            future = future
+                .then_execute(self.compute_queue.clone(), command)
+                .unwrap()
+                .boxed();
+        }
+
+        // schedule swapchain presentation and sync
+        // This function does not actually present the image immediately. Instead it submits a
+        // present command at the end of the queue. This means that it will only be presented once
+        // the GPU has finished executing the command buffer that draws.
+        let future = future
             .then_swapchain_present(self.present_queue.clone(), swap_chain.clone(), image_num)
             .then_signal_fence_and_flush();
 

@@ -9,7 +9,7 @@ use crate::{
     rgb,
     scene::Scene,
     soft_blue,
-    vk::{Buffer, OutputImage, Sampler, Set, Shader, TextureArray, VkBackend},
+    vk::{Buffer, DispatchSize, OutputImage, Sampler, Set, Shader, TextureArray, VkBackend},
     Mat4, Vec3,
 };
 
@@ -59,9 +59,10 @@ impl GPURenderer {
             ]),
             Set::new(&[tex_sampler, albedo_array.clone()]),
         ];
-        let render_shader = Shader::load_from_module(render_mod, &render_shader_sets);
+        let render_shader = Shader::load_from_module(render_mod, &render_shader_sets, DispatchSize::FrameResolution);
 
-        let radiosity_shader = Shader::load_from_module(radiosity_mod, &render_shader_sets);
+        let radiosity_shader =
+            Shader::load_from_module(radiosity_mod, &render_shader_sets, DispatchSize::Custom(8, 8, 8));
 
         backend
             .borrow_mut()
@@ -168,11 +169,13 @@ impl GPURenderer {
         self.plane_buffer.write(&planes);
         self.lights_buffer.write(&lights);
 
-        self.backend.borrow_mut().compute_submit(render_mod::ty::Constants {
-            camera_position,
-            camera_rotation,
-            camera_zdepth,
-        });
+        self.backend
+            .borrow_mut()
+            .compute_submit(&[Some(render_mod::ty::Constants {
+                camera_position,
+                camera_rotation,
+                camera_zdepth,
+            })]);
     }
 }
 
@@ -201,7 +204,7 @@ mod render_mod {
         ty: "compute",
         path:"shaders/gpu_render.comp",
         exact_entrypoint_interface: false, // Stops it from analysing what descriptors are *actually* used
-        types_meta: {use bytemuck::{Pod, Zeroable}; #[derive(Copy,Clone,Pod, Zeroable, Default)] impl crate::vk::BufferType},
+        types_meta: {use bytemuck::{Pod, Zeroable}; #[derive(Copy,Clone,Pod, Zeroable, Default, Debug)] impl crate::vk::BufferType},
     }
 }
 
