@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use vulkano::{
-    command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage, PrimaryCommandBuffer},
+    command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage},
     device::{
         physical::{PhysicalDevice, PhysicalDeviceType},
         Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo,
@@ -34,7 +34,7 @@ use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, Shader};
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
 #[cfg(debug_assertions)]
-const ENABLE_VALIDATION_LAYERS: bool = true; //FIXME: Buggy
+const ENABLE_VALIDATION_LAYERS: bool = false; //FIXME: Buggy
 #[cfg(not(debug_assertions))]
 const ENABLE_VALIDATION_LAYERS: bool = false;
 
@@ -441,7 +441,7 @@ impl VkBackend {
                         if descriptor.is_variable() {
                             let layout_binding = layout_bindings.get_mut(&(binding as u32)).unwrap();
                             layout_binding.variable_descriptor_count = true;
-                            layout_binding.descriptor_count = 7; // TODO: variable
+                            layout_binding.descriptor_count = 8; // TODO: variable
                         }
                     }
                 }
@@ -571,7 +571,7 @@ impl VkBackend {
                 crate::vk::DispatchSize::Custom(x, y, z) => [
                     (x / shader.workgroup_size.0) + 1,
                     (y / shader.workgroup_size.1) + 1,
-                    (z / shader.workgroup_size.1) + 1,
+                    (z / shader.workgroup_size.2) + 1,
                 ],
             };
 

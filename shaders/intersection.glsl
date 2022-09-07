@@ -114,8 +114,9 @@ HitInfo cast_ray(Ray ray) {
             Sphere sphere = spheres.data[hit_idx];
             normal = normalize(position - sphere.position);
             mat = sphere.mat;
-            uv = vec2(0.5 + atan(normal.x, -normal.z) / TAU,
-                      0.5 + (normal.y / 2.0));
+
+            uv = vec2(0.5 + (atan(normal.x, -normal.z) / TAU),
+                      0.5 + (asin(normal.y) / PI));
 
         } else if (hit_obj == 1) {
             Plane plane = planes.data[hit_idx];
@@ -127,18 +128,27 @@ HitInfo cast_ray(Ray ray) {
             vec3 tangent = plane.tangent;
             vec3 bitangent = cross(normal, tangent);
 
-            uv = vec2(dot(tangent, position), dot(bitangent, position));
+            uv = vec2(dot(tangent, position - plane.position),
+                      dot(bitangent, position - plane.position)) /
+                 PLANE_SIZE;
         }
 
-        vec3 colour = sample_texture(mat, uv);
+        uint lm_idx = (hit_obj * spheres.data.length()) + hit_idx;
 
-        return HitInfo(position, normal, mat, colour);
+        vec3 colour = sample_texture(mat, uv);
+        vec3 radiosity = sample_lightmap(lm_idx, uv);
+
+        return HitInfo(position, normal, mat, colour, radiosity);
 
     } else {
-        return HitInfo(vec3(FLT_MAX), vec3(FLT_MAX), NULL_MAT, vec3(FLT_MAX));
+        return HitInfo(vec3(FLT_MAX), vec3(FLT_MAX), NULL_MAT, vec3(FLT_MAX),
+                       vec3(FLT_MAX));
     }
 }
 
+// TODO: This technically causes a "penumbra" cast on objects by themselves. Not
+// sure if thats correct? Should that happen *on top* of lambertian attenuation?
+// mostly noticeable in radiosity and needs paying attention to
 float cast_shadow_ray(Ray ray, vec3 vec_to_light) {
     // Expects SphereData, PlaneData in scope
     // ray must be normalized

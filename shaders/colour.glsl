@@ -53,6 +53,7 @@ uniform sampler samp;
 uniform texture2D textures[];
 */
 vec3 sample_texture(Material mat, vec2 uv) {
-    return texture(sampler2D(textures[mat.tex_id], samp), uv * mat.tex_scale)
+    return texture(sampler2D(textures[mat.tex_id], tex_samp),
+                   uv * mat.tex_scale)
         .xyz;
 }

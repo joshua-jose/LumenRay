@@ -27,7 +27,7 @@ fn main() {
     let mut scene = Scene::empty();
 
     scene.create_entity((
-        TransformComponent::with_pos(-1.2, -1.0, 0.1),
+        TransformComponent::with_pos(-1.2, 1.0, 0.1),
         SphereRenderComponent { radius: 1.0 },
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(white!()),
@@ -41,7 +41,7 @@ fn main() {
         },
     ));
     scene.create_entity((
-        TransformComponent::with_pos(1.0, -1.0, -0.7),
+        TransformComponent::with_pos(1.0, 1.0, -0.7),
         SphereRenderComponent { radius: 1.0 },
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(soft_yellow!()),
@@ -56,7 +56,7 @@ fn main() {
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(0.0, -2.0, 0.0),
+        TransformComponent::with_pos(3.0, 0.0, -8.0),
         PlaneRenderComponent::new(vec3(0.0, 1.0, 0.0)),
         MaterialComponent {
             tex_id: engine.get_texture_by_path("assets/textures/Floor128.bmp"),
@@ -66,7 +66,7 @@ fn main() {
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(-3.0, 0.0, 0.0),
+        TransformComponent::with_pos(-3.0, 0.0, -9.0),
         PlaneRenderComponent::new(vec3(1.0, 0.0, 0.0)),
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(soft_red!()),
@@ -75,7 +75,7 @@ fn main() {
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(3.0, 0.0, 0.0),
+        TransformComponent::with_pos(3.0, 0.0, 3.0),
         PlaneRenderComponent::new(vec3(-1.0, 0.0, 0.0)),
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(soft_green!()),
@@ -84,7 +84,7 @@ fn main() {
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(0.0, 0.0, 3.0),
+        TransformComponent::with_pos(-3.0, 0.0, 3.0),
         PlaneRenderComponent::new(vec3(0.0, 0.0, -1.0)),
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(soft_gray!()),
@@ -92,7 +92,7 @@ fn main() {
         },
     ));
     scene.create_entity((
-        TransformComponent::with_pos(0.0, 0.0, -8.0),
+        TransformComponent::with_pos(3.0, 0.0, -8.0),
         PlaneRenderComponent::new(vec3(0.0, 0.0, 1.0)),
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(soft_gray!()),
@@ -101,7 +101,7 @@ fn main() {
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(0.0, 4.0, 0.0),
+        TransformComponent::with_pos(3.0, 6.0, 3.0),
         PlaneRenderComponent::new(vec3(0.0, -1.0, 0.0)),
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(soft_gray!()),
@@ -110,13 +110,13 @@ fn main() {
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(2.0, -1.0, 2.5),
+        TransformComponent::with_pos(2.0, 1.0, 2.5),
         //TransformComponent::with_pos(0.0, 3.0, -2.5),
         PointLightComponent { intensity: 5.0 },
     ));
 
     scene.create_entity((
-        TransformComponent::with_pos(0.0, 1.5, -8.5),
+        TransformComponent::with_pos(0.0, 3.5, -8.5),
         CameraComponent {
             pitch: 0.0,
             yaw:   0.0,

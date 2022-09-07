@@ -6,3 +6,5 @@
 #define UINT_MAX 4294967295
 #define TAU 6.283185307
 #define PI 3.1415926535
+// TODO: change to a parameter
+#define PLANE_SIZE 12.0

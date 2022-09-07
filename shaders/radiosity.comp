@@ -22,21 +22,24 @@ planes;
 layout(set = 0, binding = 2) readonly buffer LightData { PointLight data[]; }
 lights;
 
-layout(set = 1, binding = 0) uniform sampler samp;
+layout(set = 1, binding = 0) uniform sampler tex_samp;
 layout(set = 1, binding = 1) uniform texture2D textures[];
 
 layout(set = 2, binding = 0,
        rgba32f) readonly uniform image2D current_emissives[];
-layout(set = 2, binding = 1, rgba32f) writeonly uniform image2D new_emissives[];
-layout(set = 2, binding = 2, rgba32f) uniform image2D lightmaps[];
-layout(set = 2, binding = 3, rgba32f) uniform image2D sample_positions[];
-layout(set = 2, binding = 4, rgba32f) uniform image2D sample_albedos[];
-layout(set = 2, binding = 5, rgba32f) uniform image2D sample_normals[];
+layout(set = 3, binding = 0, rgba32f) writeonly uniform image2D new_emissives[];
+layout(set = 4, binding = 0, rgba32f) uniform image2D lightmaps[];
+layout(set = 5, binding = 0, rgba32f) uniform image2D sample_positions[];
+layout(set = 6, binding = 0, rgba32f) uniform image2D sample_albedos[];
+layout(set = 7, binding = 0, rgba32f) uniform image2D sample_normals[];
 
 // TODO: make sure to take into account material diffuse multiplier
 
 // TODO: change const
 const uint NUM_LIGHTMAPS = 8;
+
+// TODO: remove this
+vec3 sample_lightmap(uint lm_idx, vec2 uv) { return vec3(0.0); }
 
 #include "colour.glsl"
 #include "intersection.glsl"
@@ -53,7 +56,7 @@ void direct() {
         return;
     }
 
-    // 0.0..1.0 uv coords
+    // -0.5..0.5 uv coords
     vec2 uv = pix_coord / vec2(resolution.xy);
 
     // Get object and properties
@@ -62,7 +65,7 @@ void direct() {
     vec3 sample_normal;
     Material mat;
 
-    if (obj_idx > spheres.data.length()) {
+    if (obj_idx >= spheres.data.length()) {
         // Object is a plane
         obj_idx -= spheres.data.length();
         Plane plane = planes.data[obj_idx];
@@ -70,11 +73,15 @@ void direct() {
 
         vec3 tangent = plane.tangent;
         vec3 bitangent = cross(plane.normal, tangent);
-        vec3 tangent_vec = tangent * uv.x;
-        vec3 bitangent_vec = bitangent * uv.y;
 
+        vec3 tangent_vec = PLANE_SIZE * tangent * uv.x;
+        vec3 bitangent_vec = PLANE_SIZE * bitangent * uv.y;
+
+        // TODO: make position centre of plane
+        // TODO: deal with texture scale properly
         sample_position = plane.position + tangent_vec + bitangent_vec;
-        sample_albedo = sample_texture(mat, uv);
+        sample_albedo =
+            sample_texture(mat, uv / (mat.tex_scale * mat.tex_scale));
         sample_normal = plane.normal;
     } else {
         Sphere sphere = spheres.data[obj_idx];
@@ -85,7 +92,8 @@ void direct() {
 
         sample_normal = vec3(sin(theta), sin(phi), -cos(theta));
         sample_position = sphere.position + (sphere.radius * sample_normal);
-        sample_albedo = sample_texture(mat, uv);
+        sample_albedo =
+            sample_texture(mat, uv / (mat.tex_scale * mat.tex_scale));
     }
 
     // Save sample info
@@ -109,13 +117,16 @@ void direct() {
     Ray shadow_ray = Ray(sample_position + (sample_normal * EPSILON * 5.0),
                          vec_to_light_norm);
 
-    float shade = cast_shadow_ray(shadow_ray, vec_to_light_norm);
+    // FIXME: shadows not working
+    float shade = cast_shadow_ray(shadow_ray, vec_to_light);
 
     float diffuse = shade * max(dot(sample_normal, vec_to_light_norm), 0.0) *
                     light_radiance;
 
     vec3 emission = sample_albedo * (diffuse + mat.emissive);
     vec3 incident = sample_albedo * mat.emissive;
+
+    vec3 test = imageLoad(current_emissives[obj_id], ivec2(pix_coord)).xyz;
 
     imageStore(new_emissives[obj_id], ivec2(pix_coord), vec4(emission, 0.0));
     imageStore(lightmaps[obj_id], ivec2(pix_coord), vec4(incident, 0.0));

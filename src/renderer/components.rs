@@ -30,12 +30,16 @@ impl PlaneRenderComponent {
         let (a, b, c) = (normal.x, normal.y, normal.z);
 
         let tangent;
+        let mult;
         if a == 0.0 {
-            tangent = vec3(b, -c, 0.0).normalize();
+            mult = if c == 0.0 { b.signum() } else { c.signum() };
+            tangent = mult * vec3(-b, c, 0.0).normalize();
         } else if b == 0.0 {
-            tangent = vec3(c, -a, 0.0).normalize();
+            mult = if a == 0.0 { c.signum() } else { a.signum() };
+            tangent = mult * vec3(-c, a, 0.0).normalize();
         } else {
-            tangent = vec3(b, -a, 0.0).normalize();
+            mult = if a == 0.0 { b.signum() } else { a.signum() };
+            tangent = mult * vec3(-b, a, 0.0).normalize();
         }
 
         let bitangent = normal.cross(tangent);

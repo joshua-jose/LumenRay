@@ -21,6 +21,7 @@ struct HitInfo {
     vec3 normal;
     Material mat;
     vec3 colour;
+    vec3 radiosity;
 };
 
 struct Sphere {

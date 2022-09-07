@@ -21,8 +21,11 @@ planes;
 layout(set = 0, binding = 3) readonly buffer LightData { PointLight data[]; }
 lights;
 
-layout(set = 1, binding = 0) uniform sampler samp;
+layout(set = 1, binding = 0) uniform sampler tex_samp;
 layout(set = 1, binding = 1) uniform texture2D textures[];
+
+layout(set = 2, binding = 0) uniform sampler lm_samp;
+layout(set = 2, binding = 1) uniform texture2D lightmaps[];
 
 layout(push_constant) uniform Constants {
     vec3 camera_position;
@@ -30,6 +33,12 @@ layout(push_constant) uniform Constants {
     mat4 camera_rotation;  // sending a mat3 through push constants is buggy
 }
 constants;
+
+// TODO: move this
+// TODO: light map idx in material?
+vec3 sample_lightmap(uint lm_idx, vec2 uv) {
+    return texture(sampler2D(lightmaps[lm_idx], lm_samp), uv).xyz;
+}
 
 #include "colour.glsl"
 #include "intersection.glsl"
@@ -54,7 +63,8 @@ vec3 render_pixel(vec2 uv) {
         if (hit.normal.x < FLT_MAX) {
             colour += shade_object(dir, hit, transmission);
 
-            if (hit.mat.reflectivity > 1e-3) {
+            // FIXME:
+            if (hit.mat.reflectivity > 1e-3 && false) {
                 dir = reflect(dir, hit.normal);
                 ray_pos =
                     hit.position + (dir * EPSILON * 3.0);  // nudge position
@@ -83,6 +93,7 @@ void main() {
     uv.y = -uv.y;
 
     vec3 colour = aces_tonemap(render_pixel(uv));
+
     colour += dither(pix_coord, COLOUR_DEPTH);
 
     imageStore(img, ivec2(pix_coord), vec4(colour, 0.0));

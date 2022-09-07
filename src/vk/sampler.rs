@@ -14,8 +14,7 @@ pub struct Sampler {
 }
 
 impl Sampler {
-    pub fn new(backend: Arc<RefCell<VkBackend>>) -> Self {
-        let info = SamplerCreateInfo::simple_repeat_linear_no_mipmap();
+    pub fn new(backend: Arc<RefCell<VkBackend>>, info: SamplerCreateInfo) -> Self {
         let device = backend.borrow().device.clone();
         let sampler = vulkanoSampler::new(device, info).unwrap();
 

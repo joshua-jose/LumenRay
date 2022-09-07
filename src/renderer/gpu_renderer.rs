@@ -9,12 +9,13 @@ use crate::{
     rgb,
     scene::Scene,
     soft_blue,
-    vk::{Buffer, DispatchSize, OutputImage, Sampler, Set, Shader, TextureArray, VkBackend},
+    vk::{Buffer, DispatchSize, ImageArray, OutputImage, Sampler, Set, Shader, TextureArray, VkBackend},
     Mat4, Vec3,
 };
 
 use log::debug;
 use render_mod::ty::{Plane, PointLight, Sphere};
+use vulkano::sampler::{Filter, SamplerAddressMode, SamplerCreateInfo};
 
 use super::{
     srgb_to_linear, CameraComponent, MaterialComponent, PlaneRenderComponent, PointLightComponent,
@@ -44,8 +45,37 @@ impl GPURenderer {
         let plane_buffer = backend.borrow().gen_buffer(1);
         let lights_buffer = backend.borrow().gen_buffer(1);
 
-        let tex_sampler = Arc::new(Sampler::new(backend.clone()));
+        let tex_sampler = Arc::new(Sampler::new(
+            backend.clone(),
+            SamplerCreateInfo::simple_repeat_linear_no_mipmap(),
+        ));
         let albedo_array = Arc::new(TextureArray::new(backend.clone()));
+
+        let lm_sampler = Arc::new(Sampler::new(
+            backend.clone(),
+            SamplerCreateInfo {
+                address_mode: [SamplerAddressMode::ClampToEdge; 3],
+                //mag_filter: Filter::Linear,
+                //min_filter: Filter::Linear,
+                ..Default::default()
+            },
+        ));
+        // Create storage images for radiosity
+        let current_emissives = Arc::new(ImageArray::new(backend.clone()));
+        let new_emissives = Arc::new(ImageArray::new(backend.clone()));
+        let lightmaps = Arc::new(ImageArray::new(backend.clone()));
+        let sample_positions = Arc::new(ImageArray::new(backend.clone()));
+        let sample_albedos = Arc::new(ImageArray::new(backend.clone()));
+        let sample_normals = Arc::new(ImageArray::new(backend.clone()));
+
+        let lm_width = 12 * 16;
+        let lm_height = 12 * 16;
+        current_emissives.push_images(lm_width, lm_height, 8);
+        new_emissives.push_images(lm_width, lm_height, 8);
+        lightmaps.push_images(lm_width, lm_height, 8);
+        sample_positions.push_images(lm_width, lm_height, 8);
+        sample_albedos.push_images(lm_width, lm_height, 8);
+        sample_normals.push_images(lm_width, lm_height, 8);
 
         let render_mod = render_mod::load(backend.borrow().device.clone()).unwrap();
         let radiosity_mod = radiosity_mod::load(backend.borrow().device.clone()).unwrap();
@@ -57,16 +87,30 @@ impl GPURenderer {
                 plane_buffer.clone(),
                 lights_buffer.clone(),
             ]),
-            Set::new(&[tex_sampler, albedo_array.clone()]),
+            Set::new(&[tex_sampler.clone(), albedo_array.clone()]),
+            Set::new(&[lm_sampler, new_emissives.clone()]), //FIXME:
         ];
         let render_shader = Shader::load_from_module(render_mod, &render_shader_sets, DispatchSize::FrameResolution);
 
-        let radiosity_shader =
-            Shader::load_from_module(radiosity_mod, &render_shader_sets, DispatchSize::Custom(8, 8, 8));
+        let radiosity_shader_sets = [
+            Set::new(&[sphere_buffer.clone(), plane_buffer.clone(), lights_buffer.clone()]),
+            Set::new(&[tex_sampler, albedo_array.clone()]),
+            Set::new(&[current_emissives]),
+            Set::new(&[new_emissives]),
+            Set::new(&[lightmaps]),
+            Set::new(&[sample_positions]),
+            Set::new(&[sample_albedos]),
+            Set::new(&[sample_normals]),
+        ];
+        let radiosity_shader = Shader::load_from_module(
+            radiosity_mod,
+            &radiosity_shader_sets,
+            DispatchSize::Custom(lm_width, lm_height, 8),
+        );
 
         backend
             .borrow_mut()
-            .compute_setup(vec![render_shader /* , radiosity_shader*/]);
+            .compute_setup(vec![radiosity_shader, render_shader]);
 
         let mut renderer = Self {
             backend,
@@ -169,13 +213,14 @@ impl GPURenderer {
         self.plane_buffer.write(&planes);
         self.lights_buffer.write(&lights);
 
-        self.backend
-            .borrow_mut()
-            .compute_submit(&[Some(render_mod::ty::Constants {
+        self.backend.borrow_mut().compute_submit(&[
+            None,
+            Some(render_mod::ty::Constants {
                 camera_position,
                 camera_rotation,
                 camera_zdepth,
-            })]);
+            }),
+        ]);
     }
 }
 
