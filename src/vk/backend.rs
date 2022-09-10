@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use vulkano::{
-    command_buffer::{AutoCommandBufferBuilder, BlitImageInfo, CommandBufferUsage},
+    command_buffer::BlitImageInfo,
     device::{
         physical::{PhysicalDevice, PhysicalDeviceType},
         Device, DeviceCreateInfo, DeviceExtensions, Features, Queue, QueueCreateInfo,
@@ -15,7 +15,7 @@ use vulkano::{
         },
         Instance, InstanceCreateInfo, InstanceExtensions,
     },
-    pipeline::{ComputePipeline, Pipeline, PipelineBindPoint},
+    pipeline::ComputePipeline,
     swapchain::{
         acquire_next_image, AcquireError, ColorSpace, PresentMode, Surface, SurfaceCapabilities, SurfaceInfo,
         Swapchain, SwapchainCreateInfo,
@@ -30,7 +30,7 @@ use winit::{
     window::{Window, WindowBuilder},
 };
 
-use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, Shader};
+use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, ComputeSubmitBuilder, Shader};
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
 #[cfg(debug_assertions)]
@@ -60,7 +60,7 @@ pub struct VkBackend {
 
     pub compute_context: Option<ComputeContext>,
 
-    frame_number: usize,
+    pub(super) frame_number: usize,
 }
 
 impl VkBackend {
@@ -496,16 +496,12 @@ impl VkBackend {
         context.frame_data[self.frame_number].frame_image.clone()
     }
 
-    pub fn compute_submit<Pc: Copy>(&mut self, push_constants: &[Option<Pc>]) {
+    pub fn compute_begin_submit(&mut self) -> ComputeSubmitBuilder { ComputeSubmitBuilder::new(self) }
+
+    pub(super) fn compute_submit(&mut self, submit_builder: ComputeSubmitBuilder) {
         let context = self.compute_context.as_mut().expect("Compute pipeline was not created");
         let swap_chain = self.swap_chain.as_ref().expect("No swapchain");
         let frame = &mut context.frame_data[self.frame_number];
-
-        assert_eq!(
-            push_constants.len(),
-            context.shaders.len(),
-            "The number of push constants should be equal to the number of shaders"
-        );
 
         // It is important to call this function from time to time, otherwise resources will keep
         // accumulating and you will eventually reach an out of memory error.
@@ -527,58 +523,13 @@ impl VkBackend {
             }
             Err(e) => panic!("Failed to acquire next image: {:?}", e),
         };
-        let dimensions = self.swap_chain_images[0].dimensions().width_height();
+        //let dimensions = self.swap_chain_images[0].dimensions().width_height();
 
-        let mut command_buffers = Vec::with_capacity(context.shaders.len());
-        for (shader_idx, shader) in context.shaders.iter().enumerate() {
-            // Start creating command buffers for each shader
-            let pipeline = &context.pipelines[shader_idx];
+        let num_executions = submit_builder.command_builders.len();
+        let mut command_buffers = Vec::with_capacity(num_executions);
 
-            let layouts = pipeline.layout().set_layouts();
-            let mut vk_sets = Vec::with_capacity(shader.sets.len());
-
-            for (set_number, set) in shader.sets.iter().enumerate() {
-                let layout = layouts.get(set_number).unwrap();
-                let vk_set = set.get_descriptor_set(layout.clone(), self.frame_number);
-                vk_sets.push(vk_set);
-            }
-
-            //TODO: make this multiple submit? cache command buffer
-            let mut builder = AutoCommandBufferBuilder::primary(
-                self.device.clone(),
-                self.compute_queue.family(),
-                CommandBufferUsage::OneTimeSubmit,
-            )
-            .unwrap();
-
-            builder.bind_pipeline_compute(pipeline.clone()).bind_descriptor_sets(
-                PipelineBindPoint::Compute,
-                pipeline.layout().clone(),
-                0, // 0 is the index of our set
-                vk_sets,
-            );
-            // check if this shader takes push constants
-            if let Some(pc) = &push_constants[shader_idx] {
-                builder.push_constants(pipeline.layout().clone(), 0, *pc);
-            }
-
-            let group_counts = match shader.dispatch_size {
-                crate::vk::DispatchSize::FrameResolution => [
-                    (dimensions[0] / shader.workgroup_size.0) + 1,
-                    (dimensions[1] / shader.workgroup_size.1) + 1,
-                    1,
-                ],
-                crate::vk::DispatchSize::Custom(x, y, z) => [
-                    (x / shader.workgroup_size.0) + 1,
-                    (y / shader.workgroup_size.1) + 1,
-                    (z / shader.workgroup_size.2) + 1,
-                ],
-            };
-
-            builder.dispatch(group_counts).unwrap();
-
-            // Check if this is the last shader, if so we blit to the swapchain
-            if shader_idx == context.shaders.len() - 1 {
+        for (i, mut builder) in submit_builder.command_builders.into_iter().enumerate() {
+            if i == num_executions - 1 {
                 builder
                     .blit_image(BlitImageInfo::images(
                         frame.frame_image.clone(),

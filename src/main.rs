@@ -60,7 +60,7 @@ fn main() {
         PlaneRenderComponent::new(vec3(0.0, 1.0, 0.0)),
         MaterialComponent {
             tex_id: engine.get_texture_by_path("assets/textures/Floor128.bmp"),
-            tex_scale: vec2(0.4, 0.4),
+            tex_scale: vec2(0.4, 0.4) * vec2(12.0, 12.0),
             ..MaterialComponent::basic()
         },
     ));

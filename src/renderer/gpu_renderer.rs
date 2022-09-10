@@ -55,8 +55,8 @@ impl GPURenderer {
             backend.clone(),
             SamplerCreateInfo {
                 address_mode: [SamplerAddressMode::ClampToEdge; 3],
-                //mag_filter: Filter::Linear,
-                //min_filter: Filter::Linear,
+                mag_filter: Filter::Linear,
+                min_filter: Filter::Linear,
                 ..Default::default()
             },
         ));
@@ -68,8 +68,8 @@ impl GPURenderer {
         let sample_albedos = Arc::new(ImageArray::new(backend.clone()));
         let sample_normals = Arc::new(ImageArray::new(backend.clone()));
 
-        let lm_width = 12 * 16;
-        let lm_height = 12 * 16;
+        let lm_width = 12 * 8;
+        let lm_height = 12 * 8;
         current_emissives.push_images(lm_width, lm_height, 8);
         new_emissives.push_images(lm_width, lm_height, 8);
         lightmaps.push_images(lm_width, lm_height, 8);
@@ -88,7 +88,7 @@ impl GPURenderer {
                 lights_buffer.clone(),
             ]),
             Set::new(&[tex_sampler.clone(), albedo_array.clone()]),
-            Set::new(&[lm_sampler, new_emissives.clone()]), //FIXME:
+            Set::new(&[lm_sampler, new_emissives.clone()]), // FIXME:
         ];
         let render_shader = Shader::load_from_module(render_mod, &render_shader_sets, DispatchSize::FrameResolution);
 
@@ -213,14 +213,32 @@ impl GPURenderer {
         self.plane_buffer.write(&planes);
         self.lights_buffer.write(&lights);
 
+        let mut backend = self.backend.borrow_mut();
+        let mut builder = backend.compute_begin_submit();
+        builder
+            .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 0 }))
+            .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 0 }))
+            .add_shader_execution(
+                1,
+                Some(render_mod::ty::Constants {
+                    camera_position,
+                    camera_rotation,
+                    camera_zdepth,
+                }),
+            );
+
+        builder.submit();
+
+        /*
         self.backend.borrow_mut().compute_submit(&[
-            None,
+            Some(radiosity_mod::ty::Constants { stage: 0 }),
             Some(render_mod::ty::Constants {
                 camera_position,
                 camera_rotation,
                 camera_zdepth,
             }),
         ]);
+        */
     }
 }
 
