@@ -34,6 +34,8 @@ struct Plane {
     vec3 position;
     vec3 normal;
     vec3 tangent;
+    float width;
+    float height;
     Material mat;
 };
 

@@ -22,10 +22,12 @@ pub struct PlaneRenderComponent {
     pub normal:    Vec3,
     pub tangent:   Vec3,
     pub bitangent: Vec3,
+    pub width:     f32,
+    pub height:    f32,
 }
 
 impl PlaneRenderComponent {
-    pub fn new(normal: Vec3) -> Self {
+    pub fn new(normal: Vec3, width: f32, height: f32) -> Self {
         let normal = normal.normalize();
         let (a, b, c) = (normal.x, normal.y, normal.z);
 
@@ -48,6 +50,8 @@ impl PlaneRenderComponent {
             normal,
             tangent,
             bitangent,
+            width,
+            height,
         }
     }
 }

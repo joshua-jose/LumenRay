@@ -70,7 +70,20 @@ float ray_plane_intersect(Ray ray, Plane plane) {
         float d = dot(to_plane, -plane.normal) / denom;
 
         if (d >= 0.0) {
-            return d;
+            vec3 tangent = plane.tangent;
+            vec3 bitangent = cross(plane.normal, tangent);
+            vec3 position = ray.origin + (d * ray.direction);
+
+            vec3 delta = position - plane.position;
+            vec2 xy = vec2(0.5 * plane.width, 0.5 * plane.height) +
+                      vec2(dot(tangent, delta), dot(bitangent, delta));
+
+            if (xy.x > plane.width || xy.x < 0.0 || xy.y > plane.height ||
+                xy.y < 0.0) {
+                return FLT_MAX;
+            } else {
+                return d;
+            }
         } else {
             return FLT_MAX;
         }
@@ -126,9 +139,10 @@ HitInfo cast_ray(Ray ray) {
             vec3 tangent = plane.tangent;
             vec3 bitangent = cross(normal, tangent);
 
-            uv = vec2(dot(tangent, position - plane.position) - 0.125,
-                      dot(bitangent, position - plane.position) - 0.125) /
-                 PLANE_SIZE;
+            vec3 delta = position - plane.position;
+            uv = vec2(0.5) +
+                 vec2(dot(tangent, delta) / plane.width /* - 0.125 */,
+                      dot(bitangent, delta) / plane.height /*  - 0.125 */);
         }
 
         uint lm_idx = (hit_obj * spheres.data.length()) + hit_idx;

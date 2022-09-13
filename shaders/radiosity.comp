@@ -31,6 +31,7 @@ layout(set = 4, binding = 0, rgba32f) uniform image2D lightmaps[];
 layout(set = 5, binding = 0, rgba32f) uniform image2D sample_positions[];
 layout(set = 6, binding = 0, rgba32f) uniform image2D sample_albedos[];
 layout(set = 7, binding = 0, rgba32f) uniform image2D sample_normals[];
+layout(set = 8, binding = 0, rgba32f) uniform image2D sample_sizes[];
 
 layout(push_constant) uniform Constants { uint stage; }
 constants;
@@ -40,7 +41,6 @@ constants;
 // TODO: far away sample points can be combined into one
 // TODO: properly dealing with object sizes / patch sizes
 // TODO: sample spheres with a repeating sampler
-// TODO: give planes a size
 
 // TODO: remove this
 vec3 sample_lightmap(uint lm_idx, vec2 uv) { return vec3(0.0); }
@@ -67,6 +67,7 @@ void direct() {
     vec3 sample_position;
     vec3 sample_albedo;
     vec3 sample_normal;
+    vec2 sample_size;
     Material mat;
 
     if (obj_idx >= spheres.data.length()) {
@@ -75,20 +76,24 @@ void direct() {
         Plane plane = planes.data[obj_idx];
         mat = plane.mat;
 
+        sample_size =
+            vec2(plane.width / resolution.x, plane.height / resolution.y);
+
         vec3 tangent = plane.tangent;
         vec3 bitangent = cross(plane.normal, tangent);
 
         // add 0.5 to be in the middle of the sample
-        // FIXME: constant
-        vec3 tangent_vec = (PLANE_SIZE * uv.x + 0.125) * tangent;
-        vec3 bitangent_vec = (PLANE_SIZE * uv.y + 0.125) * bitangent;
+        vec3 tangent_vec =
+            (plane.width * (uv.x - 0.5) + (0.5 * sample_size.x)) * tangent;
+        vec3 bitangent_vec =
+            (plane.height * (uv.y - 0.5) + (0.5 * sample_size.y)) * bitangent;
 
-        // TODO: make position centre of plane
         // TODO: deal with texture scale properly
         sample_position = plane.position + tangent_vec + bitangent_vec;
         sample_albedo =
             sample_texture(mat, uv / (mat.tex_scale * mat.tex_scale));
         sample_normal = plane.normal;
+
     } else {
         Sphere sphere = spheres.data[obj_idx];
         mat = sphere.mat;
@@ -100,6 +105,7 @@ void direct() {
         sample_position = sphere.position + (sphere.radius * sample_normal);
         sample_albedo =
             sample_texture(mat, uv / (mat.tex_scale * mat.tex_scale));
+        sample_size = vec2(0.25);  // FIXME: not right
     }
 
     // Save sample info
@@ -109,6 +115,8 @@ void direct() {
                vec4(sample_albedo, 0.0));
     imageStore(sample_normals[obj_id], ivec2(pix_coord),
                vec4(sample_normal, 0.0));
+    imageStore(sample_sizes[obj_id], ivec2(pix_coord),
+               vec4(sample_size, 0.0, 0.0));
 
     // begin calculating direct lighting on this patch
     PointLight light = lights.data[0];  // TODO: multiple lights
@@ -123,7 +131,6 @@ void direct() {
     Ray shadow_ray = Ray(sample_position + (sample_normal * EPSILON * 5.0),
                          vec_to_light_norm);
 
-    // FIXME: shadows not working
     float shade = cast_shadow_ray(shadow_ray, vec_to_light);
 
     float diffuse = shade * max(dot(sample_normal, vec_to_light_norm), 0.0) *
@@ -141,7 +148,6 @@ void direct() {
 
 void indirect() {
     // TODO: pack lightmaps in execution? instead of using z id
-    // TODO: divide by patch sizes
     uvec2 pix_coord = gl_GlobalInvocationID.xy;  // TODO: rename
     uint obj_id = gl_GlobalInvocationID.z;
     ivec2 resolution = imageSize(lightmaps[obj_id]);
@@ -161,6 +167,7 @@ void indirect() {
         imageLoad(sample_albedos[obj_id], ivec2(pix_coord)).xyz;
     vec3 sample_normal =
         imageLoad(sample_normals[obj_id], ivec2(pix_coord)).xyz;
+    vec2 sample_size = imageLoad(sample_sizes[obj_id], ivec2(pix_coord)).xy;
 
     vec3 incident = vec3(0.0);
 
@@ -189,6 +196,8 @@ void indirect() {
                 vec3 light_normal =
                     imageLoad(sample_normals[i], ivec2(x, y)).xyz;
 
+                vec2 light_size = imageLoad(sample_sizes[i], ivec2(x, y)).xy;
+
                 vec3 vec_to_light = light_pos - sample_position;
                 vec3 vec_to_light_norm = normalize(vec_to_light);
 
@@ -208,13 +217,15 @@ void indirect() {
                        those numbers together */
                     float attenuation = dot(sample_normal, vec_to_light_norm) *
                                         -dot(light_normal, vec_to_light_norm);
-                    float diffuse = max(attenuation, 0.0) / dist_sqd;
+                    // TODO: constant of 0.01 arbritrary
+                    float diffuse = max(attenuation, 0.0) / max(dist_sqd, 0.01);
 
-                    obj_incident += light_colour * diffuse;
+                    // also scale by patch size
+                    obj_incident +=
+                        light_colour * diffuse * (light_size.x * light_size.y);
                 }
             }
         }
-        obj_incident /= (4 * 4);  // FIXME: constant
         incident += obj_incident;
     }
     incident /= PI;

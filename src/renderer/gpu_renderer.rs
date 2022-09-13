@@ -69,7 +69,9 @@ impl GPURenderer {
         let sample_positions = Arc::new(ImageArray::new(backend.clone()));
         let sample_albedos = Arc::new(ImageArray::new(backend.clone()));
         let sample_normals = Arc::new(ImageArray::new(backend.clone()));
+        let sample_sizes = Arc::new(ImageArray::new(backend.clone()));
 
+        //TODO: automatically create these for each object with the right resolution
         let lm_width = 12 * 4;
         let lm_height = 12 * 4;
         let lm_objects = 8;
@@ -79,6 +81,7 @@ impl GPURenderer {
         sample_positions.push_images(lm_width, lm_height, lm_objects);
         sample_albedos.push_images(lm_width, lm_height, lm_objects);
         sample_normals.push_images(lm_width, lm_height, lm_objects);
+        sample_sizes.push_images(lm_width, lm_height, lm_objects);
 
         let render_mod = render_mod::load(backend.borrow().device.clone()).unwrap();
         let radiosity_mod = radiosity_mod::load(backend.borrow().device.clone()).unwrap();
@@ -104,6 +107,7 @@ impl GPURenderer {
             Set::new(&[sample_positions]),
             Set::new(&[sample_albedos]),
             Set::new(&[sample_normals]),
+            Set::new(&[sample_sizes]),
         ];
         let radiosity_shader = Shader::load_from_module(
             radiosity_mod,
@@ -195,6 +199,8 @@ impl GPURenderer {
                 normal: p.normal.to_array(),
                 tangent: p.tangent.to_array(),
                 mat: m.into(),
+                width: p.width,
+                height: p.height,
                 ..Default::default()
             })
             .collect::<Vec<_>>();
