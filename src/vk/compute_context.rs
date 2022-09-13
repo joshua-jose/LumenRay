@@ -25,9 +25,6 @@ pub struct ComputeSubmitBuilder<'a> {
     pub(super) command_builders: Vec<AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>>,
 }
 
-//TODO: Make this focus on building the command buffers? rather than the whole submit
-// process. Then the submit function can pass off back to backend maybe.
-// Or it could do the whole thing
 impl<'a> ComputeSubmitBuilder<'a> {
     pub fn new(backend: &'a mut VkBackend) -> Self {
         Self {

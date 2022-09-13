@@ -25,9 +25,8 @@ lights;
 layout(set = 1, binding = 0) uniform sampler tex_samp;
 layout(set = 1, binding = 1) uniform texture2D textures[];
 
-layout(set = 2, binding = 0,
-       rgba32f) readonly uniform image2D current_emissives[];
-layout(set = 3, binding = 0, rgba32f) writeonly uniform image2D new_emissives[];
+layout(set = 2, binding = 0, rgba32f) uniform image2D current_emissives[];
+layout(set = 3, binding = 0, rgba32f) uniform image2D new_emissives[];
 layout(set = 4, binding = 0, rgba32f) uniform image2D lightmaps[];
 layout(set = 5, binding = 0, rgba32f) uniform image2D sample_positions[];
 layout(set = 6, binding = 0, rgba32f) uniform image2D sample_albedos[];
@@ -36,10 +35,12 @@ layout(set = 7, binding = 0, rgba32f) uniform image2D sample_normals[];
 layout(push_constant) uniform Constants { uint stage; }
 constants;
 
-// TODO: make sure to take into account material diffuse multiplier
-
-// TODO: change const
-const uint NUM_LIGHTMAPS = 8;
+// TODO: make sure to take into account material diffuse multiplier / currently
+// doesn't conserve energy
+// TODO: far away sample points can be combined into one
+// TODO: properly dealing with object sizes / patch sizes
+// TODO: sample spheres with a repeating sampler
+// TODO: give planes a size
 
 // TODO: remove this
 vec3 sample_lightmap(uint lm_idx, vec2 uv) { return vec3(0.0); }
@@ -77,8 +78,10 @@ void direct() {
         vec3 tangent = plane.tangent;
         vec3 bitangent = cross(plane.normal, tangent);
 
-        vec3 tangent_vec = PLANE_SIZE * tangent * uv.x;
-        vec3 bitangent_vec = PLANE_SIZE * bitangent * uv.y;
+        // add 0.5 to be in the middle of the sample
+        // FIXME: constant
+        vec3 tangent_vec = (PLANE_SIZE * uv.x + 0.125) * tangent;
+        vec3 bitangent_vec = (PLANE_SIZE * uv.y + 0.125) * bitangent;
 
         // TODO: make position centre of plane
         // TODO: deal with texture scale properly
@@ -129,14 +132,16 @@ void direct() {
     vec3 emission = sample_albedo * (diffuse + mat.emissive);
     vec3 incident = sample_albedo * mat.emissive;
 
-    vec3 test = imageLoad(current_emissives[obj_id], ivec2(pix_coord)).xyz;
+    vec3 test = imageLoad(new_emissives[obj_id], ivec2(pix_coord)).xyz;
 
-    imageStore(new_emissives[obj_id], ivec2(pix_coord), vec4(emission, 0.0));
+    imageStore(current_emissives[obj_id], ivec2(pix_coord),
+               vec4(emission, 0.0));
     imageStore(lightmaps[obj_id], ivec2(pix_coord), vec4(incident, 0.0));
 }
 
 void indirect() {
     // TODO: pack lightmaps in execution? instead of using z id
+    // TODO: divide by patch sizes
     uvec2 pix_coord = gl_GlobalInvocationID.xy;  // TODO: rename
     uint obj_id = gl_GlobalInvocationID.z;
     ivec2 resolution = imageSize(lightmaps[obj_id]);
@@ -159,18 +164,28 @@ void indirect() {
 
     vec3 incident = vec3(0.0);
 
-    for (int i = 0; i < NUM_LIGHTMAPS; i++) {
+    uint num_lightmaps = spheres.data.length() + planes.data.length();
+    for (int i = 0; i < num_lightmaps; i++) {
         if (i == obj_id) {
             continue;  // no self illumination
         }
         vec2 lm_size = imageSize(lightmaps[i]);
+        vec3 obj_incident = vec3(0.0);
+
         for (int x = 0; x < lm_size.x; x++) {
             for (int y = 0; y < lm_size.y; y++) {
                 // patch that is lighting our target patch
                 vec3 light_pos =
                     imageLoad(sample_positions[i], ivec2(x, y)).xyz;
-                vec3 light_colour =
-                    imageLoad(current_emissives[i], ivec2(x, y)).xyz;
+
+                vec3 light_colour;
+                if (constants.stage == 1) {
+                    light_colour =
+                        imageLoad(current_emissives[i], ivec2(x, y)).xyz;
+                } else {
+                    light_colour = imageLoad(new_emissives[i], ivec2(x, y)).xyz;
+                }
+
                 vec3 light_normal =
                     imageLoad(sample_normals[i], ivec2(x, y)).xyz;
 
@@ -186,7 +201,7 @@ void indirect() {
                 HitInfo hit = cast_ray(shadow_ray);
 
                 vec3 delta = hit.position - light_pos;
-                if (dot(delta, delta) < 0.01) {
+                if (hit.normal.x < FLT_MAX && dot(delta, delta) < 0.01) {
                     /* compute lambertian attenuation of light from one patch to
                        another we calculate the dot product between each plane's
                        normal, and the vector between them. then we multiply
@@ -195,34 +210,33 @@ void indirect() {
                                         -dot(light_normal, vec_to_light_norm);
                     float diffuse = max(attenuation, 0.0) / dist_sqd;
 
-                    incident += light_colour * diffuse;
+                    obj_incident += light_colour * diffuse;
                 }
             }
         }
+        obj_incident /= (4 * 4);  // FIXME: constant
+        incident += obj_incident;
     }
+    incident /= PI;
 
     vec3 old_lightmap_colour =
         imageLoad(lightmaps[obj_id], ivec2(pix_coord)).xyz;
-
     imageStore(lightmaps[obj_id], ivec2(pix_coord),
                vec4(old_lightmap_colour + incident, 0.0));
-    imageStore(new_emissives[obj_id], ivec2(pix_coord), vec4(incident, 0.0));
+
+    if (constants.stage == 1) {
+        imageStore(new_emissives[obj_id], ivec2(pix_coord),
+                   vec4(incident * sample_albedo, 0.0));
+    } else {
+        imageStore(current_emissives[obj_id], ivec2(pix_coord),
+                   vec4(incident * sample_albedo, 0.0));
+    }
 }
 
 void main() {
     if (constants.stage == 0) {
         direct();
-    } else if (constants.stage == 1) {
-        uvec2 pix_coord = gl_GlobalInvocationID.xy;
-        uint obj_id = gl_GlobalInvocationID.z;
-        ivec2 resolution = imageSize(lightmaps[obj_id]);
-
-        uint obj_idx = obj_id;
-
-        if (pix_coord.x >= resolution.x || pix_coord.y >= resolution.y) {
-            return;
-        }
-        imageStore(new_emissives[obj_id], ivec2(pix_coord),
-                   vec4(vec3(0.8, 0.1, 0.1), 0.0));
+    } else if (constants.stage == 1 || constants.stage == 2) {
+        indirect();
     }
 }

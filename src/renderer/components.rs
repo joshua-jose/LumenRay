@@ -71,7 +71,7 @@ impl MaterialComponent {
             tex_id:    0,
             tex_scale: vec2(1.0, 1.0),
 
-            ambient:      0.25,
+            ambient:      0.1,
             diffuse:      1.0,
             specular:     0.0,
             shininess:    4.0,

@@ -1,5 +1,5 @@
 # LumenRay
-A Real Time Ray Tracing Engine written in rust 
+A Real Time Ray Tracing Engine written in Rust 
 
 # Running
 `cargo run -r`
@@ -10,6 +10,7 @@ A Real Time Ray Tracing Engine written in rust
 * support for meshes and loading from .obj or using assimp
 * implement many post processing effects in shaders (depth of field, bloom, material roughness, fog, volumetric lighting, glare)
 * PBR
+* faster radiosity
 * refraction
 * photon mapping?
 * ImGUI

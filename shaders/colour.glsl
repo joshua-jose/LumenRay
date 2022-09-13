@@ -40,11 +40,45 @@ const int bayer[8][8] = {
     {15, 47, 7, 39, 13, 45, 5, 37},    /*                              */
     {63, 31, 55, 23, 61, 29, 53, 21}}; /*                              */
 
-vec3 dither(uvec2 pix_coord, float colour_depth) {
+// quantize to the colour depth
+float quantizeFloor(float value, float colour_depth) {
+    return floor(value * colour_depth) / colour_depth;
+}
+float quantizeCeil(float value, float colour_depth) {
+    return ceil(value * colour_depth) / colour_depth;
+}
+
+/* vec3 dither(uvec2 pix_coord, float colour_depth, vec3 colour) {
+    // Two closest colors.
+    vec3 qFloor = vec3(quantizeFloor(colour.r, colour_depth),
+                       quantizeFloor(colour.g, colour_depth),
+                       quantizeFloor(colour.b, colour_depth));
+
+    vec3 qCeil = vec3(quantizeCeil(colour.r, colour_depth),
+                      quantizeCeil(colour.g, colour_depth),
+                      quantizeCeil(colour.b, colour_depth));
+
+    float dither_amount = bayer[pix_coord.x % 8][pix_coord.y % 8] / 64.0;
+    vec3 ratio = (colour - qFloor) / (qCeil - qFloor);
+
+    float r = (ratio.r < dither_amount) ? qFloor.r : qCeil.r;
+    float g = (ratio.g < dither_amount) ? qFloor.g : qCeil.g;
+    float b = (ratio.b < dither_amount) ? qFloor.b : qCeil.b;
+
+    return vec3(r, g, b);
+} */
+
+vec3 dither(uvec2 pix_coord, float colour_depth, vec3 colour) {
     const float DITHER_SCALE = 2.0;
+    const vec3 LUM = vec3(0.2126, 0.7152, 0.0722);
+
     // go from 0..64 to 0..1 , then to -0.5..0.5
     int dither_amount = bayer[pix_coord.x % 8][pix_coord.y % 8];
-    return vec3(DITHER_SCALE * (dither_amount - 32) / 64.0) / colour_depth;
+    // return vec3(DITHER_SCALE * (dither_amount - 32) / 64.0) / colour_depth;
+
+    // return LUM * (DITHER_SCALE * (dither_amount - 32) / 64.0) / colour_depth;
+    return normalize(colour) * (DITHER_SCALE * (dither_amount - 32) / 64.0) /
+           colour_depth;
 }
 
 // required descriptors:

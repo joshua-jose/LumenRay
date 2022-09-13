@@ -31,6 +31,8 @@ pub struct GPURenderer {
 
     texture_paths: Vec<String>,
     albedo_array:  Arc<TextureArray>,
+
+    radiosity_computed: bool,
 }
 
 //TODO: report variable descriptor bug
@@ -68,14 +70,15 @@ impl GPURenderer {
         let sample_albedos = Arc::new(ImageArray::new(backend.clone()));
         let sample_normals = Arc::new(ImageArray::new(backend.clone()));
 
-        let lm_width = 12 * 8;
-        let lm_height = 12 * 8;
-        current_emissives.push_images(lm_width, lm_height, 8);
-        new_emissives.push_images(lm_width, lm_height, 8);
-        lightmaps.push_images(lm_width, lm_height, 8);
-        sample_positions.push_images(lm_width, lm_height, 8);
-        sample_albedos.push_images(lm_width, lm_height, 8);
-        sample_normals.push_images(lm_width, lm_height, 8);
+        let lm_width = 12 * 4;
+        let lm_height = 12 * 4;
+        let lm_objects = 8;
+        current_emissives.push_images(lm_width, lm_height, lm_objects);
+        new_emissives.push_images(lm_width, lm_height, lm_objects);
+        lightmaps.push_images(lm_width, lm_height, lm_objects);
+        sample_positions.push_images(lm_width, lm_height, lm_objects);
+        sample_albedos.push_images(lm_width, lm_height, lm_objects);
+        sample_normals.push_images(lm_width, lm_height, lm_objects);
 
         let render_mod = render_mod::load(backend.borrow().device.clone()).unwrap();
         let radiosity_mod = radiosity_mod::load(backend.borrow().device.clone()).unwrap();
@@ -88,7 +91,7 @@ impl GPURenderer {
                 lights_buffer.clone(),
             ]),
             Set::new(&[tex_sampler.clone(), albedo_array.clone()]),
-            Set::new(&[lm_sampler, new_emissives.clone()]), // FIXME:
+            Set::new(&[lm_sampler, lightmaps.clone()]),
         ];
         let render_shader = Shader::load_from_module(render_mod, &render_shader_sets, DispatchSize::FrameResolution);
 
@@ -105,7 +108,7 @@ impl GPURenderer {
         let radiosity_shader = Shader::load_from_module(
             radiosity_mod,
             &radiosity_shader_sets,
-            DispatchSize::Custom(lm_width, lm_height, 8),
+            DispatchSize::Custom(lm_width, lm_height, lm_objects as u32),
         );
 
         backend
@@ -119,6 +122,7 @@ impl GPURenderer {
             lights_buffer,
             texture_paths: vec![],
             albedo_array,
+            radiosity_computed: false,
         };
 
         renderer.get_texture_by_colour(soft_blue!());
@@ -156,17 +160,12 @@ impl GPURenderer {
     }
 
     pub fn draw(&mut self, scene: &mut Scene) {
-        //TODO: move render scene stuff into here, it's redundant
-
         // get the first camera from the query
         let (_, (camera_transform, camera_component)) = scene
             .query_mut::<(&TransformComponent, &CameraComponent)>()
             .into_iter()
             .next()
             .unwrap();
-
-        //let render_scene = scene.query_scene_objects();
-        //let camera = render_scene.camera;
 
         let rot_mat = camera_component.get_rot_mat();
         let fov_deg: f32 = camera_component.fov;
@@ -215,30 +214,25 @@ impl GPURenderer {
 
         let mut backend = self.backend.borrow_mut();
         let mut builder = backend.compute_begin_submit();
-        builder
-            .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 0 }))
-            .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 0 }))
-            .add_shader_execution(
-                1,
-                Some(render_mod::ty::Constants {
-                    camera_position,
-                    camera_rotation,
-                    camera_zdepth,
-                }),
-            );
-
-        builder.submit();
-
-        /*
-        self.backend.borrow_mut().compute_submit(&[
-            Some(radiosity_mod::ty::Constants { stage: 0 }),
+        if !self.radiosity_computed {
+            self.radiosity_computed = true;
+            builder
+                .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 0 }))
+                .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 1 }))
+                .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 2 }));
+            //.add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 1 }))
+            //.add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 2 }));
+        }
+        builder.add_shader_execution(
+            1,
             Some(render_mod::ty::Constants {
                 camera_position,
                 camera_rotation,
                 camera_zdepth,
             }),
-        ]);
-        */
+        );
+
+        builder.submit();
     }
 }
 

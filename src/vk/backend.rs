@@ -529,6 +529,7 @@ impl VkBackend {
         let mut command_buffers = Vec::with_capacity(num_executions);
 
         for (i, mut builder) in submit_builder.command_builders.into_iter().enumerate() {
+            // The last command buffer blits the frame image to the swapchain
             if i == num_executions - 1 {
                 builder
                     .blit_image(BlitImageInfo::images(
@@ -541,9 +542,6 @@ impl VkBackend {
             let command_buffer = builder.build().unwrap();
             command_buffers.push(command_buffer);
         }
-
-        //TODO: when doing automatic command buffer creation for each shader,make blitting a seperate command buffer
-        // this way it can just be tacked onto the end,and the other command buffers can be persistent
 
         //TODO: Deal with swapchain recreation
 

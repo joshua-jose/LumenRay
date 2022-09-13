@@ -120,16 +120,14 @@ HitInfo cast_ray(Ray ray) {
 
         } else if (hit_obj == 1) {
             Plane plane = planes.data[hit_idx];
-            normal = plane.normal;
             mat = plane.mat;
-
-            float a = normal.x, b = normal.y, c = normal.z;
+            normal = plane.normal;
 
             vec3 tangent = plane.tangent;
             vec3 bitangent = cross(normal, tangent);
 
-            uv = vec2(dot(tangent, position - plane.position),
-                      dot(bitangent, position - plane.position)) /
+            uv = vec2(dot(tangent, position - plane.position) - 0.125,
+                      dot(bitangent, position - plane.position) - 0.125) /
                  PLANE_SIZE;
         }
 
