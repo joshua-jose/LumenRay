@@ -34,7 +34,7 @@ use super::{Buffer, BufferType, ComputeContext, ComputeFrameData, ComputeSubmitB
 
 // TODO: maybe abstract away larger concepts (pipeline, swapchain, render pass) into own files/classes
 #[cfg(debug_assertions)]
-const ENABLE_VALIDATION_LAYERS: bool = false; //FIXME: Buggy
+const ENABLE_VALIDATION_LAYERS: bool = true;
 #[cfg(not(debug_assertions))]
 const ENABLE_VALIDATION_LAYERS: bool = false;
 
@@ -441,7 +441,7 @@ impl VkBackend {
                         if descriptor.is_variable() {
                             let layout_binding = layout_bindings.get_mut(&(binding as u32)).unwrap();
                             layout_binding.variable_descriptor_count = true;
-                            layout_binding.descriptor_count = 8; // TODO: variable
+                            layout_binding.descriptor_count = descriptor.max_size();
                         }
                     }
                 }

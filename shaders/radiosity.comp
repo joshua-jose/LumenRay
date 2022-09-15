@@ -15,12 +15,9 @@ struct Sample {
 // Compute shader workgroup size
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
-layout(set = 0, binding = 0) readonly buffer SphereData { Sphere data[]; }
-spheres;
-layout(set = 0, binding = 1) readonly buffer PlaneData { Plane data[]; }
-planes;
-layout(set = 0, binding = 2) readonly buffer LightData { PointLight data[]; }
-lights;
+layout(set = 0, binding = 0) readonly buffer SphereData { Sphere[] spheres; };
+layout(set = 0, binding = 1) readonly buffer PlaneData { Plane[] planes; };
+layout(set = 0, binding = 2) readonly buffer LightData { PointLight[] lights; };
 
 layout(set = 1, binding = 0) uniform sampler tex_samp;
 layout(set = 1, binding = 1) uniform texture2D textures[];
@@ -41,6 +38,7 @@ constants;
 // TODO: far away sample points can be combined into one
 // TODO: properly dealing with object sizes / patch sizes
 // TODO: sample spheres with a repeating sampler
+// TODO: constant resolution for lightmaps (base lightmap size on object size)
 
 // TODO: remove this
 vec3 sample_lightmap(uint lm_idx, vec2 uv) { return vec3(0.0); }
@@ -49,18 +47,21 @@ vec3 sample_lightmap(uint lm_idx, vec2 uv) { return vec3(0.0); }
 #include "intersection.glsl"
 #include "shading.glsl"
 
+uint get_num_lightmaps() { return spheres.length() + planes.length(); }
+
 void direct() {
     uvec2 pix_coord = gl_GlobalInvocationID.xy;
     uint obj_id = gl_GlobalInvocationID.z;
+
+    if (obj_id >= get_num_lightmaps()) return;
+
     ivec2 resolution = imageSize(lightmaps[obj_id]);
+
+    if (pix_coord.x >= resolution.x || pix_coord.y >= resolution.y) return;
 
     uint obj_idx = obj_id;
 
-    if (pix_coord.x >= resolution.x || pix_coord.y >= resolution.y) {
-        return;
-    }
-
-    // -0.5..0.5 uv coords
+    // 0.0..1.0 uv coords
     vec2 uv = pix_coord / vec2(resolution.xy);
 
     // Get object and properties
@@ -70,10 +71,10 @@ void direct() {
     vec2 sample_size;
     Material mat;
 
-    if (obj_idx >= spheres.data.length()) {
+    if (obj_idx >= spheres.length()) {
         // Object is a plane
-        obj_idx -= spheres.data.length();
-        Plane plane = planes.data[obj_idx];
+        obj_idx -= spheres.length();
+        Plane plane = planes[obj_idx];
         mat = plane.mat;
 
         sample_size =
@@ -90,12 +91,11 @@ void direct() {
 
         // TODO: deal with texture scale properly
         sample_position = plane.position + tangent_vec + bitangent_vec;
-        sample_albedo =
-            sample_texture(mat, uv / (mat.tex_scale * mat.tex_scale));
+        sample_albedo = sample_texture(mat, uv);
         sample_normal = plane.normal;
 
     } else {
-        Sphere sphere = spheres.data[obj_idx];
+        Sphere sphere = spheres[obj_idx];
         mat = sphere.mat;
 
         float theta = ((uv.x * 2.0) - 1.0) * PI;
@@ -119,7 +119,7 @@ void direct() {
                vec4(sample_size, 0.0, 0.0));
 
     // begin calculating direct lighting on this patch
-    PointLight light = lights.data[0];  // TODO: multiple lights
+    PointLight light = lights[0];  // TODO: multiple lights
     vec3 light_pos = light.position;
     float light_intensity = light.intensity;
     vec3 vec_to_light = light_pos - sample_position;
@@ -150,11 +150,12 @@ void indirect() {
     // TODO: pack lightmaps in execution? instead of using z id
     uvec2 pix_coord = gl_GlobalInvocationID.xy;  // TODO: rename
     uint obj_id = gl_GlobalInvocationID.z;
+
+    if (obj_id >= get_num_lightmaps()) return;
+
     ivec2 resolution = imageSize(lightmaps[obj_id]);
 
-    if (pix_coord.x >= resolution.x || pix_coord.y >= resolution.y) {
-        return;
-    }
+    if (pix_coord.x >= resolution.x || pix_coord.y >= resolution.y) return;
 
     // 0.0..1.0 uv coords
     vec2 uv = pix_coord / vec2(resolution.xy);
@@ -171,7 +172,7 @@ void indirect() {
 
     vec3 incident = vec3(0.0);
 
-    uint num_lightmaps = spheres.data.length() + planes.data.length();
+    uint num_lightmaps = get_num_lightmaps();
     for (int i = 0; i < num_lightmaps; i++) {
         if (i == obj_id) {
             continue;  // no self illumination
@@ -217,8 +218,8 @@ void indirect() {
                        those numbers together */
                     float attenuation = dot(sample_normal, vec_to_light_norm) *
                                         -dot(light_normal, vec_to_light_norm);
-                    // TODO: constant of 0.01 arbritrary
-                    float diffuse = max(attenuation, 0.0) / max(dist_sqd, 0.01);
+                    // TODO: constant of 0.03 arbritrary
+                    float diffuse = max(attenuation, 0.0) / max(dist_sqd, 0.03);
 
                     // also scale by patch size
                     obj_incident +=
@@ -228,6 +229,7 @@ void indirect() {
         }
         incident += obj_incident;
     }
+    // "because calculus"
     incident /= PI;
 
     vec3 old_lightmap_colour =
@@ -244,6 +246,7 @@ void indirect() {
     }
 }
 
+// TODO: specialisation constants? / just get rust program to swap buffers
 void main() {
     if (constants.stage == 0) {
         direct();

@@ -56,6 +56,21 @@ fn main() {
     ));
 
     scene.create_entity((
+        TransformComponent::with_pos(0.0, 2.0, 1.7),
+        SphereRenderComponent { radius: 1.2 },
+        MaterialComponent {
+            tex_id: engine.get_texture_by_colour(soft_yellow!()),
+            ambient: 0.1,
+            diffuse: 1.0,
+            specular: 0.9,
+            shininess: 32.0,
+            reflectivity: 0.25,
+            emissive: 0.0,
+            ..Default::default()
+        },
+    ));
+
+    scene.create_entity((
         TransformComponent::with_pos(0.0, -2.0, -0.5),
         PlaneRenderComponent::new(vec3(0.0, 1.0, 0.0), 6.0, 11.0),
         MaterialComponent {

@@ -9,7 +9,7 @@ use crate::{
     rgb,
     scene::Scene,
     soft_blue,
-    vk::{Buffer, DispatchSize, ImageArray, OutputImage, Sampler, Set, Shader, TextureArray, VkBackend},
+    vk::{Buffer, DispatchSize, HasDescriptor, ImageArray, OutputImage, Sampler, Set, Shader, TextureArray, VkBackend},
     Mat4, Vec3,
 };
 
@@ -22,6 +22,11 @@ use super::{
     SphereRenderComponent, Texture, TransformComponent,
 };
 
+const RESOLUTION_U: u32 = 6;
+const RESOLUTION_V: u32 = 6;
+const LM_WIDTH: u32 = 12 * RESOLUTION_U;
+const LM_HEIGHT: u32 = 12 * RESOLUTION_V;
+
 pub struct GPURenderer {
     backend: Arc<RefCell<VkBackend>>,
 
@@ -33,6 +38,13 @@ pub struct GPURenderer {
     albedo_array:  Arc<TextureArray>,
 
     radiosity_computed: bool,
+    current_emissives:  Arc<ImageArray>,
+    new_emissives:      Arc<ImageArray>,
+    lightmaps:          Arc<ImageArray>,
+    sample_positions:   Arc<ImageArray>,
+    sample_albedos:     Arc<ImageArray>,
+    sample_normals:     Arc<ImageArray>,
+    sample_sizes:       Arc<ImageArray>,
 }
 
 //TODO: report variable descriptor bug
@@ -71,18 +83,6 @@ impl GPURenderer {
         let sample_normals = Arc::new(ImageArray::new(backend.clone()));
         let sample_sizes = Arc::new(ImageArray::new(backend.clone()));
 
-        //TODO: automatically create these for each object with the right resolution
-        let lm_width = 12 * 4;
-        let lm_height = 12 * 4;
-        let lm_objects = 8;
-        current_emissives.push_images(lm_width, lm_height, lm_objects);
-        new_emissives.push_images(lm_width, lm_height, lm_objects);
-        lightmaps.push_images(lm_width, lm_height, lm_objects);
-        sample_positions.push_images(lm_width, lm_height, lm_objects);
-        sample_albedos.push_images(lm_width, lm_height, lm_objects);
-        sample_normals.push_images(lm_width, lm_height, lm_objects);
-        sample_sizes.push_images(lm_width, lm_height, lm_objects);
-
         let render_mod = render_mod::load(backend.borrow().device.clone()).unwrap();
         let radiosity_mod = radiosity_mod::load(backend.borrow().device.clone()).unwrap();
 
@@ -96,24 +96,20 @@ impl GPURenderer {
             Set::new(&[tex_sampler.clone(), albedo_array.clone()]),
             Set::new(&[lm_sampler, lightmaps.clone()]),
         ];
-        let render_shader = Shader::load_from_module(render_mod, &render_shader_sets, DispatchSize::FrameResolution);
+        let render_shader = Shader::load_from_module(render_mod, &render_shader_sets);
 
         let radiosity_shader_sets = [
             Set::new(&[sphere_buffer.clone(), plane_buffer.clone(), lights_buffer.clone()]),
             Set::new(&[tex_sampler, albedo_array.clone()]),
-            Set::new(&[current_emissives]),
-            Set::new(&[new_emissives]),
-            Set::new(&[lightmaps]),
-            Set::new(&[sample_positions]),
-            Set::new(&[sample_albedos]),
-            Set::new(&[sample_normals]),
-            Set::new(&[sample_sizes]),
+            Set::new(&[current_emissives.clone()]),
+            Set::new(&[new_emissives.clone()]),
+            Set::new(&[lightmaps.clone()]),
+            Set::new(&[sample_positions.clone()]),
+            Set::new(&[sample_albedos.clone()]),
+            Set::new(&[sample_normals.clone()]),
+            Set::new(&[sample_sizes.clone()]),
         ];
-        let radiosity_shader = Shader::load_from_module(
-            radiosity_mod,
-            &radiosity_shader_sets,
-            DispatchSize::Custom(lm_width, lm_height, lm_objects as u32),
-        );
+        let radiosity_shader = Shader::load_from_module(radiosity_mod, &radiosity_shader_sets);
 
         backend
             .borrow_mut()
@@ -126,12 +122,32 @@ impl GPURenderer {
             lights_buffer,
             texture_paths: vec![],
             albedo_array,
+
             radiosity_computed: false,
+            current_emissives,
+            new_emissives,
+            lightmaps,
+            sample_positions,
+            sample_albedos,
+            sample_normals,
+            sample_sizes,
         };
 
         renderer.get_texture_by_colour(soft_blue!());
         renderer
     }
+
+    fn add_object_lightmap(&mut self, width: u32, height: u32) {
+        self.current_emissives.push_image(width, height);
+        self.new_emissives.push_image(width, height);
+        self.lightmaps.push_image(width, height);
+        self.sample_positions.push_image(width, height);
+        self.sample_albedos.push_image(width, height);
+        self.sample_normals.push_image(width, height);
+        self.sample_sizes.push_image(width, height);
+    }
+
+    fn get_lightmap_len(&self) -> u32 { self.lightmaps.variable_descriptor_count() }
 
     pub fn get_texture_by_path(&mut self, path: &str) -> u32 {
         if let Some(idx) = self.texture_paths.iter().position(|x| x == path) {
@@ -218,19 +234,42 @@ impl GPURenderer {
         self.plane_buffer.write(&planes);
         self.lights_buffer.write(&lights);
 
+        //TODO: if objects are added or removed then they won't necessarily have the right sized lightmap
+        // due to the inability to remove or resize lightmaps at a position.
+        let num_lightmaps = self.get_lightmap_len() as usize;
+        let num_objs = spheres.len() + planes.len();
+        if num_objs > num_lightmaps {
+            let delta = num_objs - num_lightmaps;
+            for i in 0..delta {
+                if i < spheres.len() {
+                    // TODO: correct resolution
+                    self.add_object_lightmap(6 * RESOLUTION_U, 6 * RESOLUTION_V);
+                } else {
+                    let idx = i - spheres.len();
+                    let width = planes[idx].width;
+                    let height = planes[idx].height;
+                    self.add_object_lightmap(width.ceil() as u32 * RESOLUTION_U, height.ceil() as u32 * RESOLUTION_V);
+                }
+            }
+        }
+
         let mut backend = self.backend.borrow_mut();
         let mut builder = backend.compute_begin_submit();
         if !self.radiosity_computed {
             self.radiosity_computed = true;
+
+            let dispatch_size = DispatchSize::Custom(LM_WIDTH, LM_HEIGHT, num_objs as u32); //TODO: correct dispatch size
+
             builder
-                .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 0 }))
-                .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 1 }))
-                .add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 2 }));
-            //.add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 1 }))
-            //.add_shader_execution(0, Some(radiosity_mod::ty::Constants { stage: 2 }));
+                .add_shader_execution(0, dispatch_size, Some(radiosity_mod::ty::Constants { stage: 0 }))
+                .add_shader_execution(0, dispatch_size, Some(radiosity_mod::ty::Constants { stage: 1 }))
+                .add_shader_execution(0, dispatch_size, Some(radiosity_mod::ty::Constants { stage: 2 }));
+            //.add_shader_execution(0, dispatch_size, Some(radiosity_mod::ty::Constants { stage: 1 }))
+            //.add_shader_execution(0, dispatch_size, Some(radiosity_mod::ty::Constants { stage: 2 }));
         }
         builder.add_shader_execution(
             1,
+            DispatchSize::FrameResolution,
             Some(render_mod::ty::Constants {
                 camera_position,
                 camera_rotation,

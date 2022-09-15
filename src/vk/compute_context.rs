@@ -7,7 +7,7 @@ use vulkano::{
     sync::GpuFuture,
 };
 
-use super::{Shader, VkBackend, FRAMES_IN_FLIGHT};
+use super::{DispatchSize, Shader, VkBackend, FRAMES_IN_FLIGHT};
 
 pub struct ComputeFrameData {
     pub frame_image:        Arc<AttachmentImage>,
@@ -33,7 +33,9 @@ impl<'a> ComputeSubmitBuilder<'a> {
         }
     }
 
-    pub fn add_shader_execution<Pc>(&mut self, shader_idx: usize, push_constants: Option<Pc>) -> &mut Self {
+    pub fn add_shader_execution<Pc>(
+        &mut self, shader_idx: usize, dispatch_size: DispatchSize, push_constants: Option<Pc>,
+    ) -> &mut Self {
         let context = self
             .backend
             .compute_context
@@ -72,13 +74,13 @@ impl<'a> ComputeSubmitBuilder<'a> {
             builder.push_constants(pipeline.layout().clone(), 0, pc);
         }
 
-        let group_counts = match shader.dispatch_size {
-            crate::vk::DispatchSize::FrameResolution => [
+        let group_counts = match dispatch_size {
+            DispatchSize::FrameResolution => [
                 (dimensions[0] / shader.workgroup_size.0) + 1,
                 (dimensions[1] / shader.workgroup_size.1) + 1,
                 1,
             ],
-            crate::vk::DispatchSize::Custom(x, y, z) => [
+            DispatchSize::Custom(x, y, z) => [
                 (x / shader.workgroup_size.0) + 1,
                 (y / shader.workgroup_size.1) + 1,
                 (z / shader.workgroup_size.2) + 1,

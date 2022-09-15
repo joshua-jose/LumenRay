@@ -24,7 +24,7 @@ float phong(vec3 normal, vec3 vec_to_light, vec3 view_direction,
 }
 
 vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
-    PointLight light = lights.data[0];  // TODO: multiple lights
+    PointLight light = lights[0];  // TODO: multiple lights
     vec3 light_pos = light.position;
     float light_intensity = light.intensity;
 

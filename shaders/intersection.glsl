@@ -99,8 +99,8 @@ HitInfo cast_ray(Ray ray) {
     uint hit_idx = UINT_MAX;
     uint hit_obj = UINT_MAX;
 
-    for (int i = 0; i < spheres.data.length(); i++) {
-        float obj_dist = ray_sphere_intersect(ray, spheres.data[i]);
+    for (int i = 0; i < spheres.length(); i++) {
+        float obj_dist = ray_sphere_intersect(ray, spheres[i]);
         if (obj_dist < least_dist) {
             least_dist = obj_dist;
             hit_idx = i;
@@ -108,8 +108,8 @@ HitInfo cast_ray(Ray ray) {
         }
     }
 
-    for (int i = 0; i < planes.data.length(); i++) {
-        float obj_dist = ray_plane_intersect(ray, planes.data[i]);
+    for (int i = 0; i < planes.length(); i++) {
+        float obj_dist = ray_plane_intersect(ray, planes[i]);
         if (obj_dist < least_dist) {
             least_dist = obj_dist;
             hit_idx = i;
@@ -124,7 +124,7 @@ HitInfo cast_ray(Ray ray) {
         vec2 uv;
 
         if (hit_obj == 0) {
-            Sphere sphere = spheres.data[hit_idx];
+            Sphere sphere = spheres[hit_idx];
             normal = normalize(position - sphere.position);
             mat = sphere.mat;
 
@@ -132,7 +132,7 @@ HitInfo cast_ray(Ray ray) {
                       0.5 + (asin(normal.y) / PI));
 
         } else if (hit_obj == 1) {
-            Plane plane = planes.data[hit_idx];
+            Plane plane = planes[hit_idx];
             mat = plane.mat;
             normal = plane.normal;
 
@@ -140,12 +140,11 @@ HitInfo cast_ray(Ray ray) {
             vec3 bitangent = cross(normal, tangent);
 
             vec3 delta = position - plane.position;
-            uv = vec2(0.5) +
-                 vec2(dot(tangent, delta) / plane.width /* - 0.125 */,
-                      dot(bitangent, delta) / plane.height /*  - 0.125 */);
+            uv = vec2(0.5) + vec2(dot(tangent, delta) / plane.width,
+                                  dot(bitangent, delta) / plane.height);
         }
 
-        uint lm_idx = (hit_obj * spheres.data.length()) + hit_idx;
+        uint lm_idx = (hit_obj * spheres.length()) + hit_idx;
 
         vec3 colour = sample_texture(mat, uv);
         vec3 radiosity = sample_lightmap(lm_idx, uv);
@@ -173,8 +172,8 @@ float cast_shadow_ray(Ray ray, vec3 vec_to_light) {
     const float SHADING_K = 16.0;  // TODO: make actual light size
     float shade = 1.0;
 
-    for (int i = 0; i < spheres.data.length(); i++) {
-        Sphere sphere = spheres.data[i];
+    for (int i = 0; i < spheres.length(); i++) {
+        Sphere sphere = spheres[i];
         float obj_dist = ray_sphere_intersect(ray, sphere);
 
         vec3 p = sphere.position;
