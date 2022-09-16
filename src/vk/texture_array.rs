@@ -21,7 +21,7 @@ pub struct TextureArray {
 impl TextureArray {
     pub fn new(backend: Arc<RefCell<VkBackend>>) -> Self {
         Self {
-            queue:    backend.borrow().compute_queue.clone(),
+            queue:    backend.borrow().transfer_queue.clone(),
             textures: RwLock::new(vec![]),
         }
     }

@@ -1,8 +1,8 @@
 use lumen_ray::{
     engine::Engine,
     renderer::{
-        srgb_to_linear, CameraComponent, MaterialComponent, PlaneRenderComponent, PointLightComponent,
-        SphereRenderComponent, TransformComponent,
+        srgb_to_linear, CameraComponent, MaterialComponent, MeshRenderComponent, PlaneRenderComponent,
+        PointLightComponent, SphereRenderComponent, TransformComponent,
     },
     rgb,
     scene::Scene,
@@ -27,6 +27,27 @@ fn main() {
     let mut scene = Scene::empty();
 
     scene.create_entity((
+        TransformComponent::with_pos(5.0, 0.0, 0.0),
+        MeshRenderComponent {
+            mesh_id: engine.get_mesh_by_path("assets/models/cube.obj"),
+        },
+        MaterialComponent {
+            tex_id: engine.get_texture_by_colour(soft_red!()),
+            ..MaterialComponent::basic()
+        },
+    ));
+    /* scene.create_entity((
+        TransformComponent::with_pos(-5.0, 0.0, 0.0),
+        MeshRenderComponent {
+            mesh_id: engine.get_mesh_by_path("assets/models/monkey.obj"),
+        },
+        MaterialComponent {
+            tex_id: engine.get_texture_by_colour(soft_red!()),
+            ..MaterialComponent::basic()
+        },
+    )); */
+
+    scene.create_entity((
         TransformComponent::with_pos(-1.2, -1.0, 2.1),
         SphereRenderComponent { radius: 1.0 },
         MaterialComponent {
@@ -40,24 +61,10 @@ fn main() {
             ..Default::default()
         },
     ));
+
     scene.create_entity((
         TransformComponent::with_pos(1.0, -1.0, 1.7),
         SphereRenderComponent { radius: 1.0 },
-        MaterialComponent {
-            tex_id: engine.get_texture_by_colour(soft_yellow!()),
-            ambient: 0.1,
-            diffuse: 1.0,
-            specular: 0.9,
-            shininess: 32.0,
-            reflectivity: 0.25,
-            emissive: 0.0,
-            ..Default::default()
-        },
-    ));
-
-    scene.create_entity((
-        TransformComponent::with_pos(0.0, 2.0, 1.7),
-        SphereRenderComponent { radius: 1.2 },
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(soft_yellow!()),
             ambient: 0.1,

@@ -53,6 +53,7 @@ pub struct VkBackend {
     pub graphics_queue: Arc<Queue>,
     pub present_queue:  Arc<Queue>,
     pub compute_queue:  Arc<Queue>,
+    pub transfer_queue: Arc<Queue>,
 
     pub swap_chain:        Option<Arc<Swapchain<Window>>>,
     pub swap_chain_images: Vec<Arc<SwapchainImage<Window>>>,
@@ -77,7 +78,7 @@ impl VkBackend {
 
         let physical_device_index = Self::pick_physical_device(&instance, device_extensions, &surface);
         let (device, queues) = Self::create_device(&instance, physical_device_index, device_extensions);
-        let (graphics_queue, present_queue, compute_queue) = Self::get_queues(&queues, &surface);
+        let (graphics_queue, present_queue, compute_queue, transfer_queue) = Self::get_queues(&queues, &surface);
 
         let mut this = Self {
             instance,
@@ -89,6 +90,7 @@ impl VkBackend {
             graphics_queue,
             present_queue,
             compute_queue,
+            transfer_queue,
 
             swap_chain: None,
             swap_chain_images: vec![],
@@ -188,7 +190,9 @@ impl VkBackend {
     // ----------------------------------------------------------------------------------------------------------------------
 
     /// Gets the queues that we want from a list of queues, that was provided by the device.
-    fn get_queues(queues: &[Arc<Queue>], surface: &Surface<Window>) -> (Arc<Queue>, Arc<Queue>, Arc<Queue>) {
+    fn get_queues(
+        queues: &[Arc<Queue>], surface: &Surface<Window>,
+    ) -> (Arc<Queue>, Arc<Queue>, Arc<Queue>, Arc<Queue>) {
         let graphics_queue = queues
             .iter()
             .find(|q| q.family().supports_graphics())
@@ -202,7 +206,17 @@ impl VkBackend {
             .find(|q| q.family().supports_compute())
             .expect("Cannot find compute queue");
 
-        (graphics_queue.clone(), present_queue.clone(), compute_queue.clone())
+        let transfer_queue = queues
+            .iter()
+            .find(|q| q.family().explicitly_supports_transfers())
+            .unwrap_or(compute_queue);
+
+        (
+            graphics_queue.clone(),
+            present_queue.clone(),
+            compute_queue.clone(),
+            transfer_queue.clone(),
+        )
     }
 
     /// Creates a Vulkan instance

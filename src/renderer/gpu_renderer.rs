@@ -6,6 +6,7 @@
 use std::{cell::RefCell, sync::Arc};
 
 use crate::{
+    renderer::Mesh,
     rgb,
     scene::Scene,
     soft_blue,
@@ -14,16 +15,16 @@ use crate::{
 };
 
 use log::debug;
-use render_mod::ty::{Plane, PointLight, Sphere};
+use render_mod::ty::{MeshInstance, Plane, PointLight, Sphere, Triangle, Vertex};
 use vulkano::sampler::{Filter, SamplerAddressMode, SamplerCreateInfo};
 
 use super::{
-    srgb_to_linear, CameraComponent, MaterialComponent, PlaneRenderComponent, PointLightComponent,
+    srgb_to_linear, CameraComponent, MaterialComponent, MeshRenderComponent, PlaneRenderComponent, PointLightComponent,
     SphereRenderComponent, Texture, TransformComponent,
 };
 
-const RESOLUTION_U: u32 = 6;
-const RESOLUTION_V: u32 = 6;
+const RESOLUTION_U: u32 = 2;
+const RESOLUTION_V: u32 = 2;
 const LM_WIDTH: u32 = 12 * RESOLUTION_U;
 const LM_HEIGHT: u32 = 12 * RESOLUTION_V;
 
@@ -36,6 +37,12 @@ pub struct GPURenderer {
 
     texture_paths: Vec<String>,
     albedo_array:  Arc<TextureArray>,
+
+    mesh_paths:           Vec<String>,
+    meshes:               Vec<Mesh>,
+    vertex_buffer:        Arc<Buffer<Vertex>>,
+    triangle_buffer:      Arc<Buffer<Triangle>>,
+    mesh_instance_buffer: Arc<Buffer<MeshInstance>>,
 
     radiosity_computed: bool,
     current_emissives:  Arc<ImageArray>,
@@ -58,6 +65,10 @@ impl GPURenderer {
         let sphere_buffer = backend.borrow().gen_buffer(1);
         let plane_buffer = backend.borrow().gen_buffer(1);
         let lights_buffer = backend.borrow().gen_buffer(1);
+
+        let vertex_buffer = backend.borrow().gen_buffer(1);
+        let triangle_buffer = backend.borrow().gen_buffer(1);
+        let mesh_instance_buffer = backend.borrow().gen_buffer(1);
 
         let tex_sampler = Arc::new(Sampler::new(
             backend.clone(),
@@ -92,6 +103,9 @@ impl GPURenderer {
                 sphere_buffer.clone(),
                 plane_buffer.clone(),
                 lights_buffer.clone(),
+                vertex_buffer.clone(),
+                triangle_buffer.clone(),
+                mesh_instance_buffer.clone(),
             ]),
             Set::new(&[tex_sampler.clone(), albedo_array.clone()]),
             Set::new(&[lm_sampler, lightmaps.clone()]),
@@ -99,7 +113,14 @@ impl GPURenderer {
         let render_shader = Shader::load_from_module(render_mod, &render_shader_sets);
 
         let radiosity_shader_sets = [
-            Set::new(&[sphere_buffer.clone(), plane_buffer.clone(), lights_buffer.clone()]),
+            Set::new(&[
+                sphere_buffer.clone(),
+                plane_buffer.clone(),
+                lights_buffer.clone(),
+                vertex_buffer.clone(),
+                triangle_buffer.clone(),
+                mesh_instance_buffer.clone(),
+            ]),
             Set::new(&[tex_sampler, albedo_array.clone()]),
             Set::new(&[current_emissives.clone()]),
             Set::new(&[new_emissives.clone()]),
@@ -117,11 +138,19 @@ impl GPURenderer {
 
         let mut renderer = Self {
             backend,
+
             sphere_buffer,
             plane_buffer,
             lights_buffer,
+
             texture_paths: vec![],
             albedo_array,
+
+            mesh_paths: vec![],
+            meshes: vec![],
+            vertex_buffer,
+            triangle_buffer,
+            mesh_instance_buffer,
 
             radiosity_computed: false,
             current_emissives,
@@ -179,6 +208,44 @@ impl GPURenderer {
         }
     }
 
+    pub fn get_mesh_by_path(&mut self, path: &str) -> u32 {
+        if let Some(idx) = self.mesh_paths.iter().position(|x| x == path) {
+            idx as u32
+        } else {
+            debug!("Loading mesh from path \"{}\"", path);
+
+            let mesh = Mesh::from_path(path);
+            self.meshes.push(mesh);
+
+            //TODO: We are reuploading all vertices everytime a mesh is added, a bit inefficient
+            let vertices = self
+                .meshes
+                .iter()
+                .flat_map(|m| m.vertices.iter().map(|v| v.into()).collect::<Vec<_>>())
+                .collect::<Vec<_>>();
+            self.vertex_buffer.write(&vertices);
+
+            let triangles = self
+                .meshes
+                .iter()
+                .flat_map(|m| {
+                    m.triangles
+                        .iter()
+                        .map(|t| Triangle {
+                            v1_idx: t.v1_idx,
+                            v2_idx: t.v2_idx,
+                            v3_idx: t.v3_idx,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            self.triangle_buffer.write(&triangles);
+
+            self.mesh_paths.push(path.to_owned());
+            (self.mesh_paths.len() - 1) as u32
+        }
+    }
+
     pub fn draw(&mut self, scene: &mut Scene) {
         // get the first camera from the query
         let (_, (camera_transform, camera_component)) = scene
@@ -230,9 +297,39 @@ impl GPURenderer {
             })
             .collect::<Vec<_>>();
 
-        self.sphere_buffer.write(&spheres);
+        let mesh_instances = scene
+            .query_mut::<(&TransformComponent, &MeshRenderComponent, &MaterialComponent)>()
+            .into_iter()
+            .map(|(_, (t, mesh, mat))| {
+                //TODO: Model space to world space transform
+                // Probably upload a mesh buffer which has positions, scale, lm_id
+                // also eventually unify all id's
+
+                let mut start_triangle_idx = 0;
+                let mut start_vertex_idx = 0;
+                for i in 0..mesh.mesh_id {
+                    start_triangle_idx += self.meshes[i as usize].len_triangles();
+                    start_vertex_idx += self.meshes[i as usize].len_vertices();
+                }
+                MeshInstance {
+                    position: t.position.to_array(),
+                    start_triangle_idx,
+                    start_vertex_idx,
+                    num_triangles: self.meshes[mesh.mesh_id as usize].len_triangles(),
+                    mat: mat.into(),
+                    ..Default::default()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if !spheres.is_empty() {
+            self.sphere_buffer.write(&spheres);
+        }
         self.plane_buffer.write(&planes);
         self.lights_buffer.write(&lights);
+        if !mesh_instances.is_empty() {
+            self.mesh_instance_buffer.write(&mesh_instances);
+        }
 
         //TODO: if objects are added or removed then they won't necessarily have the right sized lightmap
         // due to the inability to remove or resize lightmaps at a position.
@@ -293,6 +390,17 @@ impl From<&MaterialComponent> for render_mod::ty::Material {
             reflectivity: m.reflectivity,
             emissive: m.emissive,
 
+            ..Default::default()
+        }
+    }
+}
+
+impl From<&super::Vertex> for render_mod::ty::Vertex {
+    fn from(v: &super::Vertex) -> Self {
+        Self {
+            position: v.position.to_array(),
+            normal: v.normal.to_array(),
+            uv: v.uv.to_array(),
             ..Default::default()
         }
     }

@@ -117,6 +117,34 @@ HitInfo cast_ray(Ray ray) {
         }
     }
 
+    for (int i = 0; i < mesh_instances.length(); i++) {
+        MeshInstance m = mesh_instances[i];
+
+        for (uint t = m.start_triangle_idx;
+             t < (m.start_triangle_idx + m.num_triangles); t++) {
+            Triangle triangle = triangles[t];
+
+            Vertex v1 = vertices[m.start_vertex_idx + triangle.v1_idx];
+            Vertex v2 = vertices[m.start_vertex_idx + triangle.v2_idx];
+            Vertex v3 = vertices[m.start_vertex_idx + triangle.v3_idx];
+
+            v1.position += m.position;
+            v2.position += m.position;
+            v3.position += m.position;
+
+            Sphere sphere =
+                Sphere(v1.position, 0.05,
+                       Material(0, vec2(1.0), 1.0, 1.0, 0.0, 0.0, 0.0, 0.0));
+            float obj_dist = ray_sphere_intersect(ray, sphere);
+
+            if (obj_dist < least_dist) {
+                least_dist = obj_dist;
+                hit_idx = i;
+                hit_obj = 0;  // TODO: replace with var
+            }
+        }
+    }
+
     if (least_dist < FLT_MAX) {
         vec3 position = ray.origin + (least_dist * ray.direction);
         vec3 normal;

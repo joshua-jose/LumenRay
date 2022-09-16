@@ -51,6 +51,8 @@ where
     }
 
     pub fn write(&self, data: &[T]) {
+        //TODO: make the internal buffers DeviceLocal, then when writing write to a CpuAccessibleBuffer then transfer over
+
         let mut buffers_writer = self.buffers.write().unwrap();
         let mut active_buffer = self.active_buffer.write().unwrap();
 

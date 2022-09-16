@@ -39,6 +39,26 @@ struct Plane {
     Material mat;
 };
 
+struct Vertex {
+    vec3 position;
+    vec3 normal;
+    vec2 uv;
+};
+
+struct Triangle {
+    uint v1_idx;
+    uint v2_idx;
+    uint v3_idx;
+};
+
+struct MeshInstance {
+    vec3 position;
+    uint start_triangle_idx;
+    uint start_vertex_idx;
+    uint num_triangles;
+    Material mat;
+};
+
 struct PointLight {
     vec3 position;
     float intensity;

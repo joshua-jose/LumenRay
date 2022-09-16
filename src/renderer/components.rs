@@ -56,6 +56,10 @@ impl PlaneRenderComponent {
     }
 }
 
+pub struct MeshRenderComponent {
+    pub mesh_id: u32,
+}
+
 pub struct MaterialComponent {
     pub tex_id:    u32,
     pub tex_scale: Vec2,
