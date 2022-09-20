@@ -107,7 +107,7 @@ vec3 render_pixel(vec2 uv) {
         if (hit.normal.x < FLT_MAX) {
             colour += shade_object(dir, hit, transmission);
 
-            if (hit.mat.reflectivity > 1e-3 && false) {
+            if (hit.mat.reflectivity > 1e-3) {
                 dir = reflect(dir, hit.normal);
                 ray_pos =
                     hit.position + (dir * EPSILON * 3.0);  // nudge position
@@ -141,9 +141,8 @@ void main() {
     vec2 delta4 = vec2(-0.25 / imageSize(img).x, -0.25 / imageSize(img).y);
 
     vec3 colour =
-        aces_tonemap((render_pixel(uv + delta1) + render_pixel(uv + delta2) +
-                      render_pixel(uv + delta3) + render_pixel(uv + delta4)) /
-                     4.0); */
+        aces_tonemap((render_pixel(uv + delta1) + render_pixel(uv + delta2)
+    + render_pixel(uv + delta3) + render_pixel(uv + delta4)) / 4.0); */
 
     vec3 colour = aces_tonemap(render_pixel(uv));
 

@@ -397,7 +397,7 @@ impl VkBackend {
         let extent = Self::choose_swap_extent(&capabilities, width, height);
 
         // number of swap chain images
-        let mut image_count = capabilities.min_image_count + 1;
+        let mut image_count = capabilities.min_image_count.max(FRAMES_IN_FLIGHT as u32);
         if capabilities.max_image_count.is_some() && image_count > capabilities.max_image_count.unwrap() {
             image_count = capabilities.max_image_count.unwrap();
         }

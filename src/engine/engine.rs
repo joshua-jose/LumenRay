@@ -1,6 +1,6 @@
+use std::cell::RefCell;
 use std::intrinsics::variant_count;
 use std::sync::Arc;
-use std::{cell::RefCell, fs::File};
 
 use winit::{
     event::{
@@ -67,7 +67,6 @@ impl Engine {
     pub fn get_mesh_by_path(&mut self, path: &str) -> u32 { self.renderer.get_mesh_by_path(path) }
 
     pub fn run(mut self, mut scene: Scene) {
-        let mut metric_file = File::create("metrics.csv").unwrap();
         let mut n: u32 = 0;
 
         let event_loop = self.event_loop.take().unwrap();
@@ -79,8 +78,6 @@ impl Engine {
             } => {
                 *control_flow = ControlFlow::Exit;
             }
-
-            Event::MainEventsCleared => self.on_window_update(&mut scene, &mut n, &mut metric_file),
 
             // keyboard input event
             Event::DeviceEvent {
@@ -94,11 +91,6 @@ impl Engine {
             } => self.on_key_down(key, state),
 
             Event::WindowEvent {
-                event: WindowEvent::ModifiersChanged(modifiers),
-                ..
-            } => self.on_modifiers_changed(modifiers),
-
-            Event::WindowEvent {
                 event: WindowEvent::MouseInput { state, button, .. },
                 ..
             } => self.on_mouse_down(button, state),
@@ -108,11 +100,18 @@ impl Engine {
                 ..
             } => self.on_mouse_move(delta),
 
+            Event::WindowEvent {
+                event: WindowEvent::ModifiersChanged(modifiers),
+                ..
+            } => self.on_modifiers_changed(modifiers),
+
+            Event::MainEventsCleared => self.on_window_update(&mut scene, &mut n),
+
             _ => (),
         });
     }
 
-    fn render(&mut self, scene: &mut Scene, metric_file: &mut File) {
+    fn render(&mut self, scene: &mut Scene) {
         //let frame_start = std::time::Instant::now();
 
         self.renderer.draw(scene);
@@ -203,8 +202,8 @@ impl Engine {
         };
     }
 
-    fn on_window_update(&mut self, scene: &mut Scene, n: &mut u32, metric_file: &mut File) {
+    fn on_window_update(&mut self, scene: &mut Scene, n: &mut u32) {
         self.update(scene, n);
-        self.render(scene, metric_file);
+        self.render(scene);
     }
 }

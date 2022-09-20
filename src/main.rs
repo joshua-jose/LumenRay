@@ -27,22 +27,22 @@ fn main() {
     let mut scene = Scene::empty();
 
     scene.create_entity((
-        TransformComponent::with_pos(5.0, 0.0, 0.0),
+        TransformComponent::with_pos(0.0, -1.0, 0.0),
         MeshRenderComponent {
             mesh_id: engine.get_mesh_by_path("assets/models/cube.obj"),
         },
         MaterialComponent {
-            tex_id: engine.get_texture_by_colour(soft_red!()),
+            tex_id: engine.get_texture_by_colour(soft_gray!()),
             ..MaterialComponent::basic()
         },
     ));
     /* scene.create_entity((
-        TransformComponent::with_pos(-5.0, 0.0, 0.0),
+        TransformComponent::with_pos(0.0, 0.0, 0.0),
         MeshRenderComponent {
             mesh_id: engine.get_mesh_by_path("assets/models/monkey.obj"),
         },
         MaterialComponent {
-            tex_id: engine.get_texture_by_colour(soft_red!()),
+            tex_id: engine.get_texture_by_colour(soft_gray!()),
             ..MaterialComponent::basic()
         },
     )); */
@@ -61,7 +61,7 @@ fn main() {
             ..Default::default()
         },
     ));
-
+    /*
     scene.create_entity((
         TransformComponent::with_pos(1.0, -1.0, 1.7),
         SphereRenderComponent { radius: 1.0 },
@@ -75,7 +75,7 @@ fn main() {
             emissive: 0.0,
             ..Default::default()
         },
-    ));
+    )); */
 
     scene.create_entity((
         TransformComponent::with_pos(0.0, -2.0, -0.5),

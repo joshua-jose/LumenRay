@@ -317,7 +317,6 @@ impl GPURenderer {
                     start_vertex_idx,
                     num_triangles: self.meshes[mesh.mesh_id as usize].len_triangles(),
                     mat: mat.into(),
-                    ..Default::default()
                 }
             })
             .collect::<Vec<_>>();
@@ -331,21 +330,29 @@ impl GPURenderer {
             self.mesh_instance_buffer.write(&mesh_instances);
         }
 
+        //TODO: broken if there are only planes in scene
+        //TODO: probably fixed by sending over object ids
+
         //TODO: if objects are added or removed then they won't necessarily have the right sized lightmap
         // due to the inability to remove or resize lightmaps at a position.
         let num_lightmaps = self.get_lightmap_len() as usize;
-        let num_objs = spheres.len() + planes.len();
+        let num_spheres = spheres.len();
+        let num_planes = planes.len();
+        let num_mesh_instances = mesh_instances.len();
+        let num_objs = num_spheres + num_planes + num_mesh_instances;
         if num_objs > num_lightmaps {
             let delta = num_objs - num_lightmaps;
             for i in 0..delta {
-                if i < spheres.len() {
+                if i < num_spheres {
                     // TODO: correct resolution
                     self.add_object_lightmap(6 * RESOLUTION_U, 6 * RESOLUTION_V);
-                } else {
-                    let idx = i - spheres.len();
+                } else if i < (num_spheres + num_planes) {
+                    let idx = i - num_spheres;
                     let width = planes[idx].width;
                     let height = planes[idx].height;
                     self.add_object_lightmap(width.ceil() as u32 * RESOLUTION_U, height.ceil() as u32 * RESOLUTION_V);
+                } else if i < (num_spheres + num_planes + num_mesh_instances) {
+                    self.add_object_lightmap(6 * RESOLUTION_U, 6 * RESOLUTION_V);
                 }
             }
         }
