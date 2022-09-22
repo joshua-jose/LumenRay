@@ -25,8 +25,8 @@ use super::{
 
 const RESOLUTION_U: u32 = 2;
 const RESOLUTION_V: u32 = 2;
-const LM_WIDTH: u32 = 12 * RESOLUTION_U;
-const LM_HEIGHT: u32 = 12 * RESOLUTION_V;
+const LM_WIDTH: u32 = 18 * RESOLUTION_U;
+const LM_HEIGHT: u32 = 18 * RESOLUTION_V;
 
 pub struct GPURenderer {
     backend: Arc<RefCell<VkBackend>>,
@@ -352,7 +352,7 @@ impl GPURenderer {
                     let height = planes[idx].height;
                     self.add_object_lightmap(width.ceil() as u32 * RESOLUTION_U, height.ceil() as u32 * RESOLUTION_V);
                 } else if i < (num_spheres + num_planes + num_mesh_instances) {
-                    self.add_object_lightmap(6 * RESOLUTION_U, 6 * RESOLUTION_V);
+                    self.add_object_lightmap(32 * RESOLUTION_U, 32 * RESOLUTION_V);
                 }
             }
         }

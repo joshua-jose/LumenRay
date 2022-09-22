@@ -74,18 +74,64 @@ void direct() {
 
     // 0.0..1.0 uv coords
     vec2 uv = pix_coord / vec2(resolution.xy);
+    vec2 pix_size = vec2(1.0) / vec2(resolution.xy);
 
     // Get object and properties
-    vec3 sample_position;
+    vec3 sample_position = vec3(FLT_MAX);
     vec3 sample_albedo;
-    vec3 sample_normal;
+    vec3 sample_normal = vec3(FLT_MAX);
     vec2 sample_size;
     Material mat;
 
     if (obj_idx >= (spheres.length() + planes.length())) {
+        obj_idx -= spheres.length() + planes.length();
+        MeshInstance m = mesh_instances[obj_idx];
+        mat = m.mat;
+        // Go through all triangles of that mesh
+        for (uint t = m.start_triangle_idx;
+             t < (m.start_triangle_idx + m.num_triangles); t++) {
+            Triangle triangle = triangles[t];
+
+            Vertex v1 = vertices[m.start_vertex_idx + triangle.v1_idx];
+            Vertex v2 = vertices[m.start_vertex_idx + triangle.v2_idx];
+            Vertex v3 = vertices[m.start_vertex_idx + triangle.v3_idx];
+
+            vec2 duv0 = v2.uv - v1.uv;
+            vec2 duv1 = v3.uv - v1.uv;
+            vec2 duv2 = (uv + 1.0 * pix_size) - v1.uv;
+
+            float d00 = dot(duv0, duv0);
+            float d01 = dot(duv0, duv1);
+            float d11 = dot(duv1, duv1);
+            float d20 = dot(duv2, duv0);
+            float d21 = dot(duv2, duv1);
+            float denom = d00 * d11 - d01 * d01;
+            float invDenom = 1.0 / denom;
+            float s = (d11 * d20 - d01 * d21) * invDenom;
+            float w = (d00 * d21 - d01 * d20) * invDenom;
+            float r = 1.0 - s - w;
+
+            if (s < 0.0 || w < 0.0 || w > 1.0 || s > 1.0 || (w + s) > 1.0)
+                continue;
+
+            sample_normal =
+                normalize((r * v1.normal) + (s * v2.normal) + (w * v3.normal));
+
+            sample_position = m.position + (r * v1.position) +
+                              (s * v2.position) + (w * v3.position);
+            break;
+        }
+
+        if (sample_position.x < FLT_MAX) {
+            sample_albedo = sample_texture(mat, uv);
+            sample_size = vec2(2.0) / resolution;  // FIXME: not right
+
+        } else {
+            return;  // no corresponding position on mesh
+        }
     }
 
-    if (obj_idx >= spheres.length()) {
+    else if (obj_idx >= spheres.length()) {
         // Object is a plane
         obj_idx -= spheres.length();
         Plane plane = planes[obj_idx];
@@ -116,8 +162,7 @@ void direct() {
 
         sample_normal = vec3(sin(theta), sin(phi), -cos(theta));
         sample_position = sphere.position + (sphere.radius * sample_normal);
-        sample_albedo =
-            sample_texture(mat, uv / (mat.tex_scale * mat.tex_scale));
+        sample_albedo = sample_texture(mat, uv);
         sample_size = vec2(0.25);  // FIXME: not right
     }
 

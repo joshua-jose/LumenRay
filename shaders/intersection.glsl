@@ -93,19 +93,19 @@ float ray_plane_intersect(Ray ray, Plane plane) {
     }
 }
 
-float ray_triangle_intersect(Ray ray, Vertex v1, Vertex v2, Vertex v3,
-                             inout float u, inout float v) {
-    vec3 edge1 = v2.position - v1.position;
-    vec3 edge2 = v3.position - v1.position;
+float ray_triangle_intersect(Ray ray, vec3 p1, vec3 p2, vec3 p3, inout float u,
+                             inout float v) {
+    vec3 edge1 = p2 - p1;
+    vec3 edge2 = p3 - p1;
 
     vec3 h = cross(ray.direction, edge2);
     float det = dot(h, edge1);
 
     // if (det < 0.0) return FLT_MAX;  // Back faces culled
-    //  if (abs(det) < EPSILON) return FLT_MAX; // parallel
+    // if (abs(det) < EPSILON) return FLT_MAX; // parallel
 
     float invDet = 1.0 / det;
-    vec3 s = ray.origin - v1.position;
+    vec3 s = ray.origin - p1;
     u = invDet * dot(s, h);
 
     if (u < 0.0 || u > 1.0) return FLT_MAX;  // outside triangle
@@ -117,8 +117,10 @@ float ray_triangle_intersect(Ray ray, Vertex v1, Vertex v2, Vertex v3,
 
     float t = invDet * dot(edge2, q);
 
-    if (t < 0.0) return FLT_MAX;  // intersection behind
-    return t;
+    if (t < 0.0)
+        return FLT_MAX;  // intersection behind
+    else
+        return t;
 }
 
 HitInfo cast_ray(Ray ray) {
@@ -161,28 +163,28 @@ HitInfo cast_ray(Ray ray) {
             Vertex v3 = vertices[m.start_vertex_idx + triangle.v3_idx];
 
             // translate vertices
-            v1.position += m.position;
-            v2.position += m.position;
-            v3.position += m.position;
+            vec3 p1 = v1.position + m.position;
+            vec3 p2 = v2.position + m.position;
+            vec3 p3 = v3.position + m.position;
 
             float tu;
             float tv;
-            float obj_dist = ray_triangle_intersect(ray, v1, v2, v3, tu, tv);
+            float obj_dist = ray_triangle_intersect(ray, p1, p2, p3, tu, tv);
 
             // Show vertices
-            /* Sphere sphere =
-                Sphere(v1.position, 0.15,
-                       Material(0, vec2(1.0), 1.0, 1.0, 0.0, 0.0, 0.0,
-            0.0)); obj_dist = min(obj_dist, ray_sphere_intersect(ray,
-            sphere));
+            //  Sphere sphere =
+            //     Sphere(v1.position, 0.15,
+            //            Material(0, vec2(1.0), 1.0, 1.0, 0.0, 0.0, 0.0,
+            // 0.0)); obj_dist = min(obj_dist, ray_sphere_intersect(ray,
+            // sphere));
 
-            sphere =
-                Sphere(v2.position, 0.15,
-                       Material(0, vec2(1.0), 1.0, 1.0, 0.0, 0.0, 0.0,
-            0.0)); obj_dist = min(obj_dist, ray_sphere_intersect(ray,
-            sphere)); sphere = Sphere(v3.position, 0.15, Material(0,
-            vec2(1.0), 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)); obj_dist =
-            min(obj_dist, ray_sphere_intersect(ray, sphere)); */
+            // sphere =
+            //     Sphere(v2.position, 0.15,
+            //            Material(0, vec2(1.0), 1.0, 1.0, 0.0, 0.0, 0.0,
+            // 0.0)); obj_dist = min(obj_dist, ray_sphere_intersect(ray,
+            // sphere)); sphere = Sphere(v3.position, 0.15, Material(0,
+            // vec2(1.0), 1.0, 1.0, 0.0, 0.0, 0.0, 0.0)); obj_dist =
+            // min(obj_dist, ray_sphere_intersect(ray, sphere));
 
             if (obj_dist < least_dist) {
                 least_dist = obj_dist;
@@ -321,8 +323,8 @@ float cast_shadow_ray(Ray ray, vec3 vec_to_light) {
 
             float tu;
             float tv;
-            float projected_length =
-                ray_triangle_intersect(ray, v1, v2, v3, tu, tv);
+            float projected_length = ray_triangle_intersect(
+                ray, v1.position, v2.position, v3.position, tu, tv);
 
             // we directly hit the triangle and it's blocking light
             if (projected_length < light_dist && projected_length > 0.0) {

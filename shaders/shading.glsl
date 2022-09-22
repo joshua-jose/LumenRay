@@ -50,12 +50,14 @@ vec3 shade_object(vec3 direction, HitInfo info, inout vec3 transmission) {
     transmission *=
         clamp(fresnel + mat.reflectivity, 0.0, 1.0) * obj_col;  // obj_colour
 
-    /*     return last_transmission * obj_col *
-               (mat.ambient + shade * phong(normal, vec_to_light, direction,
-                                            light_intensity, mat)); */
+    /* return last_transmission * obj_col *
+           (mat.ambient + shade * phong(normal, vec_to_light, direction,
+                                        light_intensity, mat)); */
 
     return (last_transmission * info.radiosity * obj_col) +
            last_transmission * obj_col *
                (shade *
                 phong(normal, vec_to_light, direction, light_intensity, mat));
+
+    /* return 1.5 * info.radiosity; */
 }

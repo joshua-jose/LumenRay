@@ -148,10 +148,5 @@ void main() {
 
     colour += dither(pix_coord, COLOUR_DEPTH, colour);
 
-    // FIXME: remove
-    colour += vertices[0].position * 0.000001;
-    colour += vec3(triangles[0].v1_idx) * 0.000001;
-    colour += vec3(mesh_instances[0].position) * 0.000001;
-
     imageStore(img, ivec2(pix_coord), vec4(colour, 0.0));
 }

@@ -40,7 +40,7 @@ const ENABLE_VALIDATION_LAYERS: bool = false;
 
 const VALIDATION_LAYERS: &[&str] = &["VK_LAYER_KHRONOS_validation"];
 
-pub const FRAMES_IN_FLIGHT: usize = 1;
+pub const FRAMES_IN_FLIGHT: usize = 1; //FIXME: can't actually have multiple frames in flight
 
 pub struct VkBackend {
     pub instance:              Arc<Instance>,

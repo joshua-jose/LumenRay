@@ -17,7 +17,7 @@ const HEIGHT: u32 = 600;
 
 // TODO: write tests and add codecov
 // TODO: add bench with default scene
-//TODO: replace unwraps with result propogation (`?`)
+// TODO: replace unwraps with result propogation (`?`)
 
 fn main() {
     let mut log_builder = env_logger::Builder::new();
@@ -33,6 +33,9 @@ fn main() {
         },
         MaterialComponent {
             tex_id: engine.get_texture_by_colour(soft_gray!()),
+            //tex_id: engine.get_texture_by_path("assets/textures/Floor128.bmp"),
+            //tex_id: engine.get_texture_by_path("assets/textures/Checkerboard.png"),
+            //tex_scale: vec2(4.0, 4.0),
             ..MaterialComponent::basic()
         },
     ));
