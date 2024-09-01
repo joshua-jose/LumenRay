@@ -1,5 +1,17 @@
 # LumenRay
-A Real Time Ray Tracing Engine written in Rust 
+A Real Time Ray Tracing Engine written in Rust.
+
+This project uses compute shaders to ray trace a schene in real time on the GPU. The difference beween this project, and other ray tracers, is the cached global illumination. 
+
+![](images/ray-2.png)
+
+
+### Global Illumination
+Each object has a light map which stores the indirect illumination on the object. When this map is updated, the illumination from all other objects is calculated, and stored. This map depends on the scene, and does not change when the camera moves, so does not need to be re-calculated on every frame, instead, it can be updated when the scene updates. This is a large performance gain, as ray-traced global illumination is far more costly than calculating direct illumination. This allows for a much higher frame rate and ray-tracing quality scenes in real time on hardware that would otherwise not be able to.
+
+**Without Global Illumination**
+
+![](images/ray-1.png)
 
 # Running
 `cargo run -r`
