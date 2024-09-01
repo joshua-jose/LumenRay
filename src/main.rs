@@ -26,19 +26,19 @@ fn main() {
     let mut engine = Engine::new(WIDTH, HEIGHT);
     let mut scene = Scene::empty();
 
-    scene.create_entity((
-        TransformComponent::with_pos(0.0, -1.0, 0.0),
-        MeshRenderComponent {
-            mesh_id: engine.get_mesh_by_path("assets/models/cube.obj"),
-        },
-        MaterialComponent {
-            tex_id: engine.get_texture_by_colour(soft_gray!()),
-            //tex_id: engine.get_texture_by_path("assets/textures/Floor128.bmp"),
-            //tex_id: engine.get_texture_by_path("assets/textures/Checkerboard.png"),
-            //tex_scale: vec2(4.0, 4.0),
-            ..MaterialComponent::basic()
-        },
-    ));
+    // scene.create_entity((
+    //     TransformComponent::with_pos(0.0, -1.0, 0.0),
+    //     MeshRenderComponent {
+    //         mesh_id: engine.get_mesh_by_path("assets/models/cube.obj"),
+    //     },
+    //     MaterialComponent {
+    //         // tex_id: engine.get_texture_by_colour(soft_gray!()),
+    //         //tex_id: engine.get_texture_by_path("assets/textures/Floor128.bmp"),
+    //         //tex_id: engine.get_texture_by_path("assets/textures/Checkerboard.png"),
+    //         //tex_scale: vec2(4.0, 4.0),
+    //         ..MaterialComponent::basic()
+    //     },
+    // ));
     /* scene.create_entity((
         TransformComponent::with_pos(0.0, 0.0, 0.0),
         MeshRenderComponent {
@@ -64,7 +64,7 @@ fn main() {
             ..Default::default()
         },
     ));
-    /*
+
     scene.create_entity((
         TransformComponent::with_pos(1.0, -1.0, 1.7),
         SphereRenderComponent { radius: 1.0 },
@@ -78,7 +78,7 @@ fn main() {
             emissive: 0.0,
             ..Default::default()
         },
-    )); */
+    ));
 
     scene.create_entity((
         TransformComponent::with_pos(0.0, -2.0, -0.5),

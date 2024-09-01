@@ -13,8 +13,18 @@ Each object has a light map which stores the indirect illumination on the object
 
 ![](images/ray-1.png)
 
+# Controls
+Move around the scene using WASD, uncapture the mouse using the Escape key.
+
 # Running
-`cargo run -r`
+A `.zip` is provided in Releases, extract and run `lumen_ray.exe`.
+
+# Building From Source
+Currently only tested on Windows 10/11, with an Nvidia GPU.
+
+* Install cargo/rustup.
+* `cargo run -r`
+
 
 # Roadmap
 * radiosity
